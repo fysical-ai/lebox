@@ -1,0 +1,83 @@
+# LeBox software spec v0.1 (21 Nov 2026)
+
+Status: high-level design agreed. Step 1 of the build order is implemented against a simulated board; nothing has run on hardware yet.
+
+## Decisions
+- The policy never sees box state. Its only inputs are the sensors (cameras, arm state). Box encoder readings are logged alongside each frame for scoring, not as observations.
+- Calibration is automatic by default: each servo finds its own hard stops by stall detection, with torque as low as possible so printed parts cannot be snapped. A manual sweep stays as fallback.
+- LeRobot version to target: not chosen yet. `lerobot-rollout` and strategy plugins need v0.6.0 or later.
+
+## Architecture
+One small library with no knowledge of policies, plus two thin adapters into LeRobot.
+
+| Piece | Job |
+|---|---|
+| `Board` | List of module descriptors (servo ID, scale, markings). Reads every module in real units; passive (torque off) and drive modes. Talks to hardware only through the `ServoBus` interface; own USB adapter, IDs 1-4. |
+| Calibration | Finds stops, sets encoder offset, saves one JSON per board id. |
+| Reset | Drives modules to a start state and verifies it. |
+| Tasks | Declarative YAML: instruction, start, goal, tolerance, hold time, timeout. |
+| Scorer | Pure function of task + encoder trace -> outcome and metrics. |
+| `lerobot_strategy_lebox` | Rollout strategy plugin for `lerobot-rollout --strategy.type=lebox`. Episodic loop with the reset timer replaced by a box reset, plus scoring. Box state goes in strategy-owned dataset columns. |
+| `lebox-record` | Own teleop recording script on LeRobot's robot, teleoperator and dataset classes (`lerobot-record` has no plugin hook). |
+| Report | Success rate and failure breakdown per checkpoint; later an overnight sweep. |
+
+Units shown to the user: switch I / O / II (degrees), dial 0-100 % (0 % at the clockwise stop, CLOSED), plunger 0-4, slider 1-5.
+
+## Calibration routine and its safety rules
+Servo: STS3215 C046, listed stall torque 14.4 kg.cm at 7.4 V and 9.2 kg.cm at 6 V. LeBox runs at 5 V; no listed figure, estimate 7 to 8 kg.cm. At full stall that is about 2 kg at the slider and plunger gears (36 and 34.5 mm radius), inside the 3 kg load the parts were sized against, but the dial and switch are direct drive and have no stress number for their stops yet.
+
+Rules:
+1. Hard cap in the servo itself: write `Max_Torque_Limit` (EEPROM) during `lebox setup-motors`, so no software fault or power cycle can exceed it. Level set after measuring, about twice the minimum moving torque. To verify on one loose servo: that the cap survives a power cycle and that the working limit starts from it.
+2. Find the minimum torque: start near 5 %, raise in small steps until the element just moves; calibrate at that plus a small margin. Store per module as a friction baseline.
+3. Creep, never jump: goal only 1 to 2 degrees ahead of the present position at low speed. Small arrival energy, and no long way round if the encoder wrap lies inside the travel.
+4. Stop = position unchanged for about 0.2 s. Release torque at once and back off. Never sit in stall.
+5. Read back every limit register before enabling torque; refuse to move on a mismatch.
+6. Compare measured travel with the design travel (switch 84 deg, dial 274 deg, plunger 20 mm, slider 40.6 mm); reject if more than about 5 % off. Catches a false stop on a tight print.
+7. Working range = stops minus a margin (switch +-40 of +-42 deg, dial +-135 of +-137 deg).
+8. First runs: one bare servo on the desk, then one module at a time with a hand on the power plug.
+
+To do before the first powered run: stress estimate from CAD for the dial stop lug and the switch slot ends at the capped torque.
+
+## Success
+Three layers: state (raw encoders, logged every frame), task (written once), outcome (computed, never hand-labelled). Any episode can be re-scored later under a new definition.
+
+Outcomes: `success`, `no_contact`, `partial` (with progress 0-1), `overshoot`, `wrong_module`, `side_effect`, `aborted`. Metrics: final error, time to success.
+
+Example task:
+```yaml
+name: slider_to_3
+instruction: "Move the slider to 3"
+start:
+  slider: {sample: [1, 2, 4, 5]}
+  dial: 50
+goal:
+  slider: {target: 3, tol: 0.15}
+others: unchanged
+hold_s: 1.0
+timeout_s: 30
+```
+
+## Reset
+The start state belongs to the task (fixed or sampled); `lebox home set` captures a default base environment. Sequence: confirm arm parked clear -> torque on, capped -> drive each module to target, always approaching from the same side -> verify -> torque off -> confirm it stayed -> log actual start. A stall during reset stops and flags the episode.
+
+## Commands
+`lebox setup-motors`, `lebox calibrate`, `lebox monitor`, `lebox move`, `lebox reset`, `lebox home set`, `lebox selftest`, `lebox task list|check`, `lebox-record`, `lerobot-rollout --strategy.type=lebox`, `lebox report`.
+
+## Build order
+1. `Board` + `monitor`, plus a simulated board for development without hardware. **Done, simulated board only.**
+2. Feetech bus driver, then `calibrate`, `move`, `reset`, `selftest` (reset repeatability is a paper result).
+3. Tasks + scorer, tested by moving modules by hand.
+4. `lebox-record`.
+5. Rollout strategy.
+6. `report`, then the overnight sweep over checkpoints.
+
+Steps 1-3 need neither the arm nor a policy.
+
+## Open items
+1. Pick and pin the LeRobot version; decide whether the bus driver wraps LeRobot's motor bus class or the Feetech SDK directly.
+2. Confirm in the first test that strategy-owned dataset columns stay out of the policy's inputs.
+3. Confirm the Feetech register behaviour in safety rule 1 on a loose servo.
+4. Stress estimate for dial lug and switch stops (see above).
+5. Whether success should also require the arm to have let go or returned to park.
+6. Plunger scale: the code assumes ring 0 shows when fully pushed in and ring 4 when fully pulled out, on the stops. To confirm on the printed rod.
+7. Which physical end of the switch and slider is the low end of the scale is set by calibration, not assumed.
