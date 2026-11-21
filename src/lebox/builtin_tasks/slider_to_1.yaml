@@ -1,0 +1,7 @@
+name: slider_to_1
+instruction: "Move the slider to 1"
+start:
+  slider: {range: [2, 5]}
+goal:
+  slider: 1
+timeout_s: 30

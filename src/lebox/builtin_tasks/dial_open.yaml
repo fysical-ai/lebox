@@ -1,0 +1,7 @@
+name: dial_open
+instruction: "Open the valve fully"
+start:
+  dial: {range: [0, 75]}
+goal:
+  dial: OPEN
+timeout_s: 30

@@ -1,0 +1,7 @@
+name: plunger_push
+instruction: "Push the plunger all the way in"
+start:
+  plunger: {range: [2, 3.9]}
+goal:
+  plunger: 0
+timeout_s: 30

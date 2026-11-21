@@ -91,3 +91,103 @@ def test_the_installed_command_runs():
     )
     assert result.returncode == 0
     assert "slider" in result.stdout
+
+
+# Tasks and scoring
+
+
+def write_trace(tmp_path, moves, duration=5.0):
+    from conftest import Episode
+    from lebox import save_trace
+
+    return save_trace(tmp_path / "ep.jsonl", Episode().samples(moves, duration=duration))
+
+
+def test_task_list_shows_every_builtin_with_its_instruction():
+    code, text = run("task", "list")
+    assert code == 0
+    lines = text.splitlines()
+    assert len(lines) == 11
+    assert "slider_to_3   Move the slider to 3" in lines
+    assert "dial_open     Open the valve fully" in lines
+
+
+def test_task_show_describes_a_builtin():
+    code, text = run("task", "show", "slider_to_3")
+    assert code == 0
+    assert text.splitlines() == [
+        "slider_to_3",
+        "  instruction  Move the slider to 3",
+        "  start        slider: one of 1, 2, 4, 5",
+        "  goal         slider: 2.85 to 3.15 (target 3)",
+        "  others       unchanged",
+        "  hold         1 s",
+        "  timeout      30 s",
+    ]
+
+
+def test_task_show_reads_a_file_and_reports_an_unknown_name(tmp_path, capsys):
+    path = tmp_path / "mine.yaml"
+    path.write_text(
+        "name: mine\ninstruction: Open it\nstart: {dial: {range: [0, 50]}, slider: 2}\n"
+        "goal: {dial: {min: 75}}\nothers_tol: {slider: 0.5}\n",
+        encoding="utf-8",
+    )
+    code, text = run("task", "show", str(path))
+    assert code == 0
+    assert "  start        dial: anywhere from 0 to 50" in text
+    assert "               slider: 2" in text
+    assert "  goal         dial: 75 to 100.741" in text
+    assert "  others       unchanged (slider within 0.5)" in text
+    code, _ = run("task", "show", "nope")
+    assert code == 1 and "neither a built-in task nor a task file" in capsys.readouterr().err
+
+
+def test_task_check_passes_good_files_and_fails_bad_ones(tmp_path):
+    good = tmp_path / "good.yaml"
+    good.write_text("name: good\ninstruction: Do it\nstart: {slider: 1}\ngoal: {slider: 3}\n", encoding="utf-8")
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("name: bad\ninstruction: Do it\nstart: {slider: 3}\ngoal: {slider: 3}\n", encoding="utf-8")
+    code, text = run("task", "check", str(good))
+    assert code == 0 and text == f"ok    {good}: good\n"
+    code, text = run("task", "check", str(good), str(bad), str(tmp_path / "missing.yaml"))
+    assert code == 1
+    lines = text.splitlines()
+    assert lines[0].startswith("ok ") and lines[1].startswith("FAIL ") and lines[2].startswith("FAIL ")
+    assert "episode would begin solved" in lines[1] and "cannot read task file" in lines[2]
+
+
+def test_score_prints_the_outcome(tmp_path):
+    trace = write_trace(tmp_path, [(0.0, 2.0, "slider", 3.0)])
+    code, text = run("score", "slider_to_3", str(trace))
+    assert code == 0
+    assert text.splitlines() == [
+        "slider_to_3: success",
+        "  duration       2.9 s",
+        "  time to goal   1.9 s",
+        "  progress       100% (best 100%)",
+        "  final error    slider 0",
+        "  moved          slider",
+        "  disturbed      -",
+    ]
+
+
+def test_score_json_and_aborted(tmp_path):
+    import json
+
+    trace = write_trace(tmp_path, [(0.0, 2.0, "slider", 2.0)], duration=1.0)
+    code, text = run("score", "slider_to_3", str(trace), "--json", "--aborted", "operator stop")
+    assert code == 0
+    data = json.loads(text)
+    assert data["outcome"] == "aborted" and data["abort_reason"] == "operator stop"
+    code, text = run("score", "slider_to_3", str(trace), "--aborted", "operator stop")
+    assert "slider_to_3: aborted" in text and "  reason         operator stop" in text
+
+
+def test_score_reports_bad_input(tmp_path, capsys):
+    code, _ = run("score", "slider_to_3", str(tmp_path / "missing.jsonl"))
+    assert code == 1 and "cannot read trace file" in capsys.readouterr().err
+    partial = tmp_path / "partial.jsonl"
+    partial.write_text('{"t": 0, "values": {"slider": 1}}\n')
+    code, _ = run("score", "slider_to_3", str(partial))
+    assert code == 1 and "has no value for" in capsys.readouterr().err

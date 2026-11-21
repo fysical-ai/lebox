@@ -1,6 +1,6 @@
 # LeBox software spec v0.1 (21 Nov 2026)
 
-Status: high-level design agreed. Step 1 of the build order is implemented against a simulated board; nothing has run on hardware yet.
+Status: high-level design agreed. Steps 1 and 3 of the build order are implemented against a simulated board; nothing has run on hardware yet.
 
 ## Decisions
 - The policy never sees box state. Its only inputs are the sensors (cameras, arm state). Box encoder readings are logged alongside each frame for scoring, not as observations.
@@ -41,7 +41,15 @@ To do before the first powered run: stress estimate from CAD for the dial stop l
 ## Success
 Three layers: state (raw encoders, logged every frame), task (written once), outcome (computed, never hand-labelled). Any episode can be re-scored later under a new definition.
 
-Outcomes: `success`, `no_contact`, `partial` (with progress 0-1), `overshoot`, `wrong_module`, `side_effect`, `aborted`. Metrics: final error, time to success.
+Outcomes: `success`, `late`, `side_effect`, `overshoot`, `partial`, `wrong_module`, `no_contact`, `aborted`. Metrics: progress (0-1, at the end and best), final error per goal module, time to goal, duration, which modules moved and which were left disturbed.
+
+Rules as implemented:
+- Success needs every goal module inside its goal and, with `others: unchanged`, every other module within tolerance of where it started, continuously for `hold_s`. The live scorer ends the episode at that moment; otherwise the episode runs to `timeout_s` and is classified from its final state.
+- `late` is new against the first draft of this spec: in the goal when the episode ended, but not held long enough.
+- A module counts as moved beyond a quarter of its marking tolerance, and as disturbed beyond the full tolerance (switch 5 deg, dial 3 %, plunger and slider 0.15) unless `others_tol` says otherwise.
+- The start state for scoring is the first sample of the trace, i.e. where the modules really were.
+- Task files: `start` takes a value or marking, `{sample: [...]}`, `{range: [low, high]}` or `random`; `goal` takes a value or marking, `{target, tol}` or `{min, max}`. Every goal module must have a start, and a start may not lie in or next to the goal.
+- Not yet supported: goals sampled per episode ("move the slider to {n}"), and ordered multi-step tasks.
 
 Example task:
 ```yaml
@@ -66,7 +74,7 @@ The start state belongs to the task (fixed or sampled); `lebox home set` capture
 ## Build order
 1. `Board` + `monitor`, plus a simulated board for development without hardware. **Done, simulated board only.**
 2. Feetech bus driver, then `calibrate`, `move`, `reset`, `selftest` (reset repeatability is a paper result).
-3. Tasks + scorer, tested by moving modules by hand.
+3. Tasks + scorer. **Done on the simulated board**; testing by hand on the real box follows the driver.
 4. `lebox-record`.
 5. Rollout strategy.
 6. `report`, then the overnight sweep over checkpoints.

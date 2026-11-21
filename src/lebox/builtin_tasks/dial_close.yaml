@@ -1,0 +1,7 @@
+name: dial_close
+instruction: "Close the valve"
+start:
+  dial: {range: [25, 100]}
+goal:
+  dial: CLOSED
+timeout_s: 30
