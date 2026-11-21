@@ -28,7 +28,7 @@ The images are renders of the v0.2 design, not photos of a built box.
 
 ## Status
 
-Early. This repository currently holds the first piece of the host software, and it runs against a simulated board only.
+Early. This repository currently holds the first pieces of the host software, and they run against a simulated board only.
 
 | Piece | State |
 |---|---|
@@ -38,15 +38,17 @@ Early. This repository currently holds the first piece of the host software, and
 | Simulated servo bus | done |
 | `lebox monitor --sim` | done |
 | Feetech bus driver | not started; needs the hardware |
-| `lebox calibrate`, `move`, `reset`, `selftest` | not started |
-| Tasks and scorer | not started |
+| `lebox calibrate`, `move`, `reset`, `selftest` | not started; need the driver |
+| Task files, with 11 built-in tasks | done |
+| Scorer and trace files | done |
+| `lebox task list`, `show`, `check` and `lebox score` | done |
 | `lebox-record` and the `lerobot-rollout` strategy | not started |
 
 The design is in [docs/software-spec.md](docs/software-spec.md).
 
 ## Try it
 
-Python 3.10 or newer. No dependencies.
+Python 3.10 or newer. The only dependency is PyYAML.
 
 ```bash
 pip install -e ".[dev]"
@@ -78,6 +80,54 @@ Each module reads in the units printed on its tile.
 | slider | 4 | mark number, 1 to 5 | 1 to 5 |
 
 The scale is linear between the two hard stops. The software commands and scores in a working range slightly inside the stops.
+
+## Tasks and scoring
+
+A task says what the robot is asked to do and what counts as done. It is a short YAML file:
+
+```yaml
+name: slider_to_3
+instruction: "Move the slider to 3"
+start:
+  slider: {sample: [1, 2, 4, 5]}   # where the slider is put before each episode
+goal:
+  slider: {target: 3, tol: 0.15}
+others: unchanged                  # touching any other module is a side effect
+hold_s: 1.0                        # the goal must hold this long
+timeout_s: 30
+```
+
+```bash
+lebox task list                  # the 11 built-in tasks
+lebox task show slider_to_3      # what a task asks for
+lebox task check my_task.yaml    # check your own task file for mistakes
+```
+
+An episode is recorded as a trace: the position of every module over time, straight from the encoders. The outcome is computed from the task and the trace, never labelled by hand, so the same trace always scores the same and can be scored again later under a different definition.
+
+```bash
+lebox score slider_to_3 episode.jsonl
+```
+
+```text
+slider_to_3: side_effect
+  duration       30.0 s
+  progress       100% (best 100%)
+  final error    slider 0
+  moved          dial, slider
+  disturbed      dial
+```
+
+| Outcome | Meaning |
+|---|---|
+| `success` | goal reached and held, nothing else disturbed |
+| `late` | in the goal when the episode ended, but not yet held long enough |
+| `side_effect` | goal reached, but another module was moved and left displaced |
+| `overshoot` | the goal was reached at some point but not held |
+| `partial` | a goal module was moved, the goal was never reached |
+| `wrong_module` | only modules that are not part of the goal were moved |
+| `no_contact` | nothing moved |
+| `aborted` | the episode was stopped from outside |
 
 ## Using it from Python
 

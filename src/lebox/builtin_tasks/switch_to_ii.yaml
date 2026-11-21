@@ -1,0 +1,7 @@
+name: switch_to_ii
+instruction: "Flip the switch to II"
+start:
+  switch: {sample: [I, O]}
+goal:
+  switch: II
+timeout_s: 30

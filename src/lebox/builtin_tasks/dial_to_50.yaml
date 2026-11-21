@@ -1,0 +1,7 @@
+name: dial_to_50
+instruction: "Turn the valve to 50"
+start:
+  dial: {sample: [CLOSED, 25, 75, OPEN]}
+goal:
+  dial: 50
+timeout_s: 30

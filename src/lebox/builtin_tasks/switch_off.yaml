@@ -1,0 +1,7 @@
+name: switch_off
+instruction: "Set the switch to O"
+start:
+  switch: {sample: [I, II]}
+goal:
+  switch: O
+timeout_s: 30
