@@ -2,6 +2,11 @@
 
 An open-source, self-resetting, self-scoring test bench for robot manipulation policies.
 
+<p align="center">
+  <img src="docs/images/lebox-overview.png" width="760" alt="CAD render of LeBox: a grey 2 x 2 board with a red plunger, a black knife switch, a blue valve handle and a white slider, with the base of an SO-101 arm fixed in front of it">
+</p>
+<p align="center"><em>LeBox v0.2 (CAD render). The white part is the base of an SO-101 arm on the tie bar that fixes the arm to the box.</em></p>
+
 Evaluating a policy on a real robot usually needs a person to put the scene back after every episode and to judge whether the episode worked. LeBox removes both jobs. It is a 2 x 2 board of four modules: a knife switch, a valve handle, a push-pull plunger and a slider. Each module is coupled to one Feetech STS3215 bus servo that does three things:
 
 - **torque off:** a passive, back-drivable joint the robot operates
@@ -9,6 +14,17 @@ Evaluating a policy on a real robot usually needs a person to put the scene back
 - **torque on:** resets the module to any commanded or randomised start state
 
 LeBox is built for [LeRobot](https://github.com/huggingface/lerobot) and the SO-101 arm.
+
+<p align="center">
+  <img src="docs/images/lebox-mechanisms.png" width="760" alt="CAD render of LeBox with the tiles removed, showing one servo in an orange cassette under each module">
+</p>
+<p align="center"><em>Tiles removed: one servo, in its orange cassette, under each module. The plunger and slider run on sector gears; the switch and valve are direct drive.</em></p>
+
+| With tiles | Without tiles |
+|---|---|
+| ![LeBox from the valve side: markings CLOSED to OPEN around the valve, I, O and II beside the switch, 1 to 5 along the slider](docs/images/lebox-tiles-on.png) | ![The same view with the tiles removed, showing the four servos](docs/images/lebox-tiles-off.png) |
+
+The images are renders of the v0.2 design, not photos of a built box.
 
 ## Status
 
