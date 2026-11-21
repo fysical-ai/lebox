@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lebox"
+version = "0.0.1"
+description = "Software for LeBox, a self-resetting, self-scoring test bench for robot manipulation policies."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Simon Cowling" }]
+keywords = ["robotics", "lerobot", "so-101", "policy-evaluation", "benchmark"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+lebox = "lebox.cli:main"
+
+[project.urls]
+Repository = "https://github.com/fysical-ai/lebox"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
