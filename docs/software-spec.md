@@ -1,6 +1,6 @@
 # LeBox software spec v0.1 (21 Nov 2026)
 
-Status: high-level design agreed. Steps 1 and 3 of the build order are implemented against a simulated board; nothing has run on hardware yet.
+Status: high-level design agreed. Steps 1 to 3 of the build order are implemented and run end to end on a simulated board. The servo driver is tested against an emulated servo only; nothing has run on hardware yet. `docs/bench-day.md` is the plan for the first hardware run.
 
 ## Decisions
 - The policy never sees box state. Its only inputs are the sensors (cameras, arm state). Box encoder readings are logged alongside each frame for scoring, not as observations.
@@ -65,6 +65,15 @@ hold_s: 1.0
 timeout_s: 30
 ```
 
+## Driver and motion, as implemented
+- `feetech.py` speaks the Feetech serial protocol directly through pyserial at 1 Mbit/s, so it does not depend on a LeRobot version. Registers used: model (3), id (5), stored maximum torque (16), torque switch (40), goal position (42), working torque limit (48), lock (55), present position (56), voltage (62), temperature (63).
+- The Feetech memory table says the stored maximum torque is copied to the working limit at power-on. Whether the servo also refuses a higher working limit afterwards is not documented; bench-day step 4 tests it.
+- `motion.py` is the only code that enables torque. Per move: refuse unless the stored cap is at or below 40 %; write the working limit (default 15 %) and read it back; enable torque with the goal on the present position; creep with the goal at most 60 counts ahead; no progress for 0.25 s is a stall and releases at once; torque is always off at the end.
+- `lebox setup-motors` assigns ids 1-4 one servo at a time and stores a 30 % cap.
+- `lebox calibrate --bench` is for loose servos without stops: the present position becomes mid-travel and the design travel sets the ends.
+- Not yet done from the rules above: finding the stops by stall, finding the minimum torque automatically, comparing measured with design travel on a real board, and approaching from the same side.
+- Possibly useful later: writing 128 to the torque switch makes the present position read 2048, which would centre a module's travel on the encoder.
+
 ## Reset
 The start state belongs to the task (fixed or sampled); `lebox home set` captures a default base environment. Sequence: confirm arm parked clear -> torque on, capped -> drive each module to target, always approaching from the same side -> verify -> torque off -> confirm it stayed -> log actual start. A stall during reset stops and flags the episode.
 
@@ -73,7 +82,7 @@ The start state belongs to the task (fixed or sampled); `lebox home set` capture
 
 ## Build order
 1. `Board` + `monitor`, plus a simulated board for development without hardware. **Done, simulated board only.**
-2. Feetech bus driver, then `calibrate`, `move`, `reset`, `selftest` (reset repeatability is a paper result).
+2. Feetech bus driver, then `calibrate`, `move`, `reset`, `selftest` (reset repeatability is a paper result). **Written and passing on the simulator; first hardware run pending.** Calibration so far is the bench version for loose servos; finding the printed hard stops is still to do.
 3. Tasks + scorer. **Done on the simulated board**; testing by hand on the real box follows the driver.
 4. `lebox-record`.
 5. Rollout strategy.
