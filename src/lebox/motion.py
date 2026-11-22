@@ -7,8 +7,8 @@ nothing keeps pushing against an obstacle:
    allowed maximum. The cap is written once by ``lebox setup-motors``.
 2. Set the working torque limit, read it back, and refuse to start if the
    servo did not take it.
-3. Creep: the commanded position is never more than a few degrees ahead of
-   where the servo actually is.
+3. Creep: the commanded position advances at a set, slow speed and is never
+   more than a few degrees ahead of where the servo actually is.
 4. If the servo stops making progress it has stalled. Release at once.
 5. Always end with torque off, whatever happened, including Ctrl+C.
 """
@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from .bus import ServoBus
+from .bus import BusError, ServoBus
 
 
 class MotionError(Exception):
@@ -45,6 +45,8 @@ class MotionSettings:
     """Working torque limit for moves, per mille of stall torque."""
     max_cap: int = 400
     """Refuse to drive a servo whose stored cap is above this."""
+    speed_ticks_s: float = 800.0
+    """How fast the commanded position advances (800 counts/s is about 70 degrees/s)."""
     lead_ticks: int = 60
     """How far ahead of the present position the goal may be (60 counts is about 5 degrees)."""
     period_s: float = 0.02
@@ -53,6 +55,8 @@ class MotionSettings:
     progress_ticks: int = 3
     tolerance_ticks: int = 6
     """Close enough to the target (6 counts is about half a degree)."""
+    near_ticks: int = 25
+    """A servo that comes to rest this close to the target has arrived, short by friction, not stalled."""
     settle_s: float = 0.15
     timeout_s: float = 10.0
 
@@ -63,6 +67,8 @@ class MotionSettings:
             )
         if self.lead_ticks <= self.tolerance_ticks:
             raise MotionError("lead_ticks must be larger than tolerance_ticks")
+        if self.speed_ticks_s <= 0 or self.period_s <= 0:
+            raise MotionError("speed_ticks_s and period_s must be greater than 0")
 
 
 class Clock:
@@ -126,15 +132,21 @@ def drive(
 
         started = clock.now()
         progress_position, progress_time = position, started
+        goal = float(position)
+        step = settings.speed_ticks_s * settings.period_s
         while abs(target - position) > settings.tolerance_ticks:
-            lead = max(-settings.lead_ticks, min(settings.lead_ticks, target - position))
-            bus.write_goal(servo_id, position + lead)
+            # Advance the goal at the set speed, but never further ahead of the servo than the lead.
+            goal += max(-step, min(step, target - goal))
+            goal = max(position - settings.lead_ticks, min(position + settings.lead_ticks, goal))
+            bus.write_goal(servo_id, round(goal))
             clock.sleep(settings.period_s)
             position = bus.read_position(servo_id)
             now = clock.now()
             if abs(position - progress_position) >= settings.progress_ticks:
                 progress_position, progress_time = position, now
             elif now - progress_time >= settings.stall_s:
+                if abs(target - position) <= settings.near_ticks:
+                    break  # at rest just short of the target: friction, not an obstacle
                 raise StallError(servo_id, position, target)
             if now - started > settings.timeout_s:
                 raise MotionError(
@@ -144,7 +156,18 @@ def drive(
         bus.write_goal(servo_id, target)
         clock.sleep(settings.settle_s)
     finally:
-        bus.set_torque(servo_id, False)
+        _release(bus, servo_id)
 
     clock.sleep(settings.settle_s)
     return bus.read_position(servo_id)
+
+
+def _release(bus: ServoBus, servo_id: int, attempts: int = 3) -> None:
+    """Torque off, trying again if the bus hiccups: this is the one write that must get through."""
+    for attempt in range(attempts):
+        try:
+            bus.set_torque(servo_id, False)
+            return
+        except BusError:
+            if attempt == attempts - 1:
+                raise

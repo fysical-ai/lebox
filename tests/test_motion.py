@@ -59,6 +59,50 @@ def test_drive_never_commands_far_ahead_of_the_present_position(rig):
     assert leads[0] == 0  # torque is enabled with the goal on the present position
 
 
+def test_the_commanded_position_advances_at_the_set_speed(rig):
+    board, bus, clock = rig
+    goals = []
+    original = bus.write_goal
+    bus.write_goal = lambda servo_id, raw: (goals.append((bus.time, raw)), original(servo_id, raw))[1]
+    start, target = bus.read_position(DIAL.servo_id), board.raw_for("dial", "open")
+    began = bus.time
+    drive(bus, DIAL.servo_id, target, clock=clock)
+    settings = MotionSettings()
+    steps = [abs(b[1] - a[1]) for a, b in zip(goals, goals[1:])]
+    assert max(steps) <= round(settings.speed_ticks_s * settings.period_s) + 1  # 16 counts per 20 ms
+    travel_time = goals[-1][0] - began
+    assert travel_time == pytest.approx(abs(target - start) / settings.speed_ticks_s, rel=0.1)
+
+
+def test_a_servo_that_rests_just_short_of_the_target_has_arrived_not_stalled(rig):
+    board, bus, clock = rig
+    target = board.raw_for("slider", 4)
+    # Something stops it 15 counts short of the target: inside near_ticks, outside the tolerance.
+    servo = bus._servo(SLIDER.servo_id)
+    servo.stop_a, servo.stop_b = min(servo.limits), target - 15
+    final = drive(bus, SLIDER.servo_id, target, clock=clock)
+    assert target - final == 15
+    assert not bus.torque_enabled(SLIDER.servo_id)
+
+
+def test_release_is_retried_if_the_bus_hiccups(rig):
+    from lebox import BusError
+
+    board, bus, clock = rig
+    failures = {"left": 2}
+    original = bus.set_torque
+
+    def flaky(servo_id, enabled):
+        if not enabled and failures["left"]:
+            failures["left"] -= 1
+            raise BusError("no answer")
+        original(servo_id, enabled)
+
+    bus.set_torque = flaky
+    drive(bus, SLIDER.servo_id, board.raw_for("slider", 4), clock=clock)
+    assert failures["left"] == 0 and not bus.torque_enabled(SLIDER.servo_id)
+
+
 def test_drive_refuses_a_servo_without_a_stored_cap():
     calibration = Calibration.from_design()
     bus = SimBus.for_board(calibration)  # factory state: cap at 100 %
