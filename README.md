@@ -41,7 +41,9 @@ Early. The host software runs end to end on a simulated board. The driver for re
 | Safe motion: `lebox move`, `reset`, `selftest` | done on the simulator; not yet run on real servos |
 | `lebox calibrate --bench` (loose servos, no stops) | done on the simulator |
 | Calibration against the printed hard stops | not started; needs the printed parts |
-| Task files, with 11 built-in tasks | done |
+| Task files: one step or many, reach and hold steps, several wordings, table import; 13 built-in tasks | done |
+| Step codes: a task on one line, e.g. `C0 A2 D4 AS B0` | done |
+| LeBox Standard Test v1.0: 37 tasks in three levels, run and reported with `lebox suite` | done on the simulator |
 | Scorer and trace files | done |
 | `lebox task list`, `show`, `check` and `lebox score` | done |
 | `lebox task run`: reset, then score an episode live | done on the simulator |
@@ -104,7 +106,7 @@ The scale is linear between the two hard stops. The software commands and scores
 
 ## Tasks and scoring
 
-A task says what the robot is asked to do and what counts as done. It is a short YAML file:
+A task says what the robot is asked to do and what counts as done. [docs/tasks.md](docs/tasks.md) is the full reference. A one-step task is a short YAML file:
 
 ```yaml
 name: slider_to_3
@@ -119,9 +121,45 @@ timeout_s: 30
 ```
 
 ```bash
-lebox task list                  # the 11 built-in tasks
+lebox task list                  # the 13 built-in tasks
+lebox board                      # modules, servo ids, names and scales
 lebox task show slider_to_3      # what a task asks for
 lebox task check my_task.yaml    # check your own task file for mistakes
+```
+
+A longer task is a list of steps. A step either reaches a goal or holds still for a time, and the robot gets the whole instruction up front:
+
+```yaml
+name: valve_wait_slider
+start:
+  dial: {range: [0, 30]}
+  slider: {sample: [1, 2]}
+steps:
+  - say: ["Turn the blue valve to 50%", "Set the blue valve half open"]
+    reach: {dial: 50}
+    within_s: 20
+  - say: "Wait 30 seconds"
+    hold_s: 30
+    early_s: 5
+  - say: "Slide the slider to 5"
+    reach: {slider: 5}
+    within_s: 20
+```
+
+The steps are the definition of the task; `say` is only the wording, and one of the alternatives is picked per episode. A fixed description is generated from the steps (`dial=50±3 within 20s | hold 30s (-5s) | slider=5±0.15 within 20s`), so results can be grouped whatever the wording. Tasks can also be written as a table and imported with `lebox task import`.
+
+Every standard step also has a short code, the tile letter and the number printed on the tile, so a whole task fits on one line:
+
+```bash
+lebox codes                                             # the 16 standard steps and their wordings
+lebox task run --sim "A1 B100 C4 D1 > C0 A2 D4 AS B0"   # start state > steps
+```
+
+The LeBox Standard Test is a frozen set of 37 such tasks in three levels (one action, two or three, five or more) for comparing policies:
+
+```bash
+lebox suite list
+lebox suite run --sim --out runs/demo --episodes 1
 ```
 
 An episode is recorded as a trace: the position of every module over time, straight from the encoders. The outcome is computed from the task and the trace, never labelled by hand, so the same trace always scores the same and can be scored again later under a different definition.
@@ -147,6 +185,8 @@ slider_to_3: side_effect
 | `overshoot` | the goal was reached at some point but not held |
 | `partial` | a goal module was moved, the goal was never reached |
 | `wrong_module` | only modules that are not part of the goal were moved |
+| `wrong_order` | a later step was carried out before the present one |
+| `too_early` | the robot moved on before a wait was over |
 | `no_contact` | nothing moved |
 | `aborted` | the episode was stopped from outside |
 

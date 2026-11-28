@@ -27,6 +27,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "lebox.builtin_tasks" = ["*.yaml"]
+"lebox.library" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

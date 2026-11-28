@@ -154,7 +154,7 @@ Then break it on purpose, one run each:
 | Reach 3, and also turn the switch servo and leave it | `side_effect` |
 | Ctrl+C part way | `aborted` |
 
-Then run all eleven tasks once:
+Then run every built-in task once (two of them have several steps):
 
 ```bash
 for task in $(lebox task list | awk '{print $1}'); do

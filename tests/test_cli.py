@@ -107,9 +107,11 @@ def test_task_list_shows_every_builtin_with_its_instruction():
     code, text = run("task", "list")
     assert code == 0
     lines = text.splitlines()
-    assert len(lines) == 11
-    assert "slider_to_3   Move the slider to 3" in lines
-    assert "dial_open     Open the valve fully" in lines
+    assert len(lines) == 13
+    listed = dict(line.split(None, 1) for line in lines)
+    assert listed["slider_to_3"] == "Move the slider to 3"
+    assert listed["dial_open"] == "Open the valve fully"
+    assert listed["valve_wait_slider"].startswith("Turn the blue valve to 50%, then wait 30 seconds")
 
 
 def test_task_show_describes_a_builtin():
@@ -118,6 +120,7 @@ def test_task_show_describes_a_builtin():
     assert text.splitlines() == [
         "slider_to_3",
         "  instruction  Move the slider to 3",
+        "  standard     slider=3±0.15",
         "  start        slider: one of 1, 2, 4, 5",
         "  goal         slider: 2.85 to 3.15 (target 3)",
         "  others       unchanged",
@@ -191,3 +194,90 @@ def test_score_reports_bad_input(tmp_path, capsys):
     partial.write_text('{"t": 0, "values": {"slider": 1}}\n')
     code, _ = run("score", "slider_to_3", str(partial))
     assert code == 1 and "has no value for" in capsys.readouterr().err
+
+
+# Steps, tables and the board listing
+
+
+def test_board_lists_servo_ids_names_and_scales():
+    code, text = run("board")
+    assert code == 0
+    lines = text.splitlines()
+    assert lines[0].split() == ["tile", "module", "servo", "id", "called", "scale", "markings", "codes"]
+    assert lines[2] == "B    dial             2  the blue valve    0 to 100 %        CLOSED, 25, 50, 75, OPEN  B0 B25 B50 B75 B100"
+    assert [line.split()[:3] for line in lines[1:]] == [
+        ["A", "switch", "1"], ["B", "dial", "2"], ["C", "plunger", "3"], ["D", "slider", "4"],
+    ]
+    assert lines[1].endswith("A0 A1 A2")
+
+
+def test_task_show_lists_the_steps_of_a_longer_task():
+    code, text = run("task", "show", "valve_wait_slider")
+    assert code == 0
+    assert text.splitlines() == [
+        "valve_wait_slider",
+        "  instruction  Turn the blue valve to 50%, then wait 30 seconds, then slide the slider to 5.",
+        "  standard     dial=50±3 within 20s | hold 30s (-5s) | slider=5±0.15 within 20s",
+        "  start        dial: anywhere from 0 to 30",
+        "               slider: one of 1, 2",
+        "  step 0       reach  dial: 47 to 53 (target 50), within 20 s",
+        "  step 1       hold   30 s (may move on 5 s early)",
+        "  step 2       reach  slider: 4.85 to 5.15 (target 5), within 20 s",
+        "  wordings     8",
+        "  others       unchanged",
+        "  hold         1 s",
+        "  timeout      72 s",
+    ]
+
+
+def test_score_reports_how_far_a_longer_task_got(tmp_path):
+    from conftest import Episode
+    from lebox import save_trace
+
+    moves = [(0.0, 2.0, "dial", 50.0), (20.0, 22.0, "slider", 5.0)]
+    samples = Episode(start={"dial": 10.0, "slider": 1.0}).samples(moves, duration=40.0)
+    trace = save_trace(tmp_path / "ep.jsonl", samples)
+    code, text = run("score", "valve_wait_slider", str(trace))
+    assert code == 0
+    assert text.splitlines()[:3] == [
+        "valve_wait_slider: too_early",
+        "  steps          1 of 3 (stopped at step 1)",
+        "  duration       20.1 s",
+    ]
+    assert "  final error    -" in text
+
+
+TABLE = (
+    "kind,say,dial,slider,within_s,hold_s,early_s\n"
+    "start,,0..30,1|2,,,\n"
+    "reach,Turn the blue valve to 50%,50,,20,,\n"
+    "hold,Wait 30 seconds,,,,30,5\n"
+    "reach,Slide the slider to 5,,5,20,,\n"
+)
+
+
+def test_task_import_turns_a_table_into_a_task_file(tmp_path):
+    table = tmp_path / "Valve Wait.csv"
+    table.write_text(TABLE, encoding="utf-8")
+    code, text = run("task", "import", str(table))
+    assert code == 0
+    assert text.startswith("name: valve_wait\n") and "hold_s: 30" in text and "range: [0, 30]" in text
+
+    output = tmp_path / "mine.yaml"
+    code, text = run("task", "import", str(table), "--name", "mine", "-o", str(output))
+    assert code == 0
+    assert text == f"Wrote {output}: 3 step(s)\n  dial=50±3 within 20s | hold 30s (-5s) | slider=5±0.15 within 20s\n"
+    # The file it wrote is a task like any other.
+    assert run("task", "check", str(output)) == (0, f"ok    {output}: mine\n")
+    code, text = run("task", "run", "--sim", str(output), "--seed", "2")
+    assert code == 0 and "mine: success" in text and "steps          3 of 3" in text
+
+
+def test_task_import_reports_a_bad_table(tmp_path, capsys):
+    table = tmp_path / "bad.csv"
+    table.write_text("kind,dial\nstart,10\nreach,150\n", encoding="utf-8")
+    assert run("task", "import", str(table))[0] == 1
+    error = capsys.readouterr().err
+    assert str(table) in error and "outside the working range" in error
+    assert run("task", "import", str(tmp_path / "missing.csv"))[0] == 1
+    assert "cannot read table" in capsys.readouterr().err

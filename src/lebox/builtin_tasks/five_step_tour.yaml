@@ -1,0 +1,17 @@
+name: five_step_tour
+start:
+  plunger: {range: [2, 3.9]}
+  switch: I
+  slider: {sample: [1, 2]}
+  dial: {range: [40, 100]}
+steps:
+  - reach: {plunger: 0}
+    within_s: 20
+  - reach: {switch: II}
+    within_s: 20
+  - reach: {slider: 4}
+    within_s: 20
+  - reach: {switch: start}
+    within_s: 20
+  - reach: {dial: CLOSED}
+    within_s: 20

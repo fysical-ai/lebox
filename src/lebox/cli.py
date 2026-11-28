@@ -17,11 +17,14 @@ from . import __version__
 from .board import Board, Reading
 from .bus import BusError, ServoBus, SimBus, demo_positions
 from .calibration import Calibration, CalibrationError, default_path
+from .codes import codes_for, codes_to_dict, standard_steps
+from .episode import SimHand, run_episode
 from .modules import DEFAULT_MODULES, ModuleError, ModuleSpec
 from .motion import Clock, MotionError, MotionSettings, SimClock
 from .scorer import Result, ScoreError, Scorer, score
-from .task import Start, Task, TaskError, builtin_names, find_task, load_builtin
-from .trace import Sample, TraceError, load_trace, save_trace
+from .task import Start, Task, TaskError, builtin_names, find_task, load_builtin, table_to_dict
+from .suite import SuiteError, load_results, load_suite, run_suite, summarise
+from .trace import TraceError, load_trace, save_trace
 
 BAR_WIDTH = 25
 SIM_CAP = 300
@@ -159,17 +162,39 @@ def _describe_start(start: Start) -> str:
     return f"anywhere from {start.values[0]:g} to {start.values[1]:g}"
 
 
+def _describe_goal(goal) -> str:
+    if goal.from_start:
+        return f"{goal.module}: back where it started (within {goal.high:g})"
+    target = f" (target {goal.target:g})" if goal.target is not None else ""
+    return f"{goal.module}: {goal.low:g} to {goal.high:g}{target}"
+
+
 def describe_task(task: Task) -> list[str]:
-    lines = [task.name, f"  instruction  {task.instruction}"]
+    lines = [task.name, f"  instruction  {task.instruction}", f"  {'standard':<11}  {task.signature}"]
+    code = codes_for(task)
+    if code:
+        lines.insert(1, f"  {'code':<11}  {code}")
     label = "start"
     for module, start in task.start.items():
         lines.append(f"  {label:<11}  {module}: {_describe_start(start)}")
         label = ""
-    label = "goal"
-    for goal in task.goals:
-        target = f" (target {goal.target:g})" if goal.target is not None else ""
-        lines.append(f"  {label:<11}  {goal.module}: {goal.low:g} to {goal.high:g}{target}")
-        label = ""
+    if len(task.steps) == 1 and task.steps[0].kind == "reach":
+        label = "goal"
+        for goal in task.goals:
+            lines.append(f"  {label:<11}  {_describe_goal(goal)}")
+            label = ""
+    else:
+        for index, step in enumerate(task.steps):
+            if step.kind == "hold":
+                early = f" (may move on {step.early_s:g} s early)" if step.early_s else ""
+                text = f"hold   {step.hold_s:g} s{early}"
+            else:
+                within = f", within {step.within_s:g} s" if step.within_s is not None else ""
+                text = "reach  " + "; ".join(_describe_goal(goal) for goal in step.goals) + within
+            lines.append(f"  {f'step {index}':<11}  {text}")
+    variants = len(task.instructions) or max(1, _product(len(step.say) or 1 for step in task.steps))
+    if variants > 1:
+        lines.append(f"  {'wordings':<11}  {variants}")
     others = task.others
     if task.others == "unchanged" and task.others_tol:
         others += " (" + ", ".join(f"{name} within {tol:g}" for name, tol in task.others_tol.items()) + ")"
@@ -179,6 +204,13 @@ def describe_task(task: Task) -> list[str]:
     return lines
 
 
+def _product(numbers) -> int:
+    total = 1
+    for number in numbers:
+        total *= number
+    return total
+
+
 def describe_result(result: Result) -> list[str]:
     def row(label: str, text: str) -> str:
         return f"  {label:<13}  {text}"
@@ -186,11 +218,14 @@ def describe_result(result: Result) -> list[str]:
     lines = [f"{result.task}: {result.outcome}"]
     if result.abort_reason:
         lines.append(row("reason", result.abort_reason))
+    if result.steps_total > 1:
+        stopped = "" if result.failed_step is None else f" (stopped at step {result.failed_step})"
+        lines.append(row("steps", f"{result.steps_completed} of {result.steps_total}{stopped}"))
     lines.append(row("duration", f"{result.duration_s:.1f} s"))
     if result.time_to_goal_s is not None:
         lines.append(row("time to goal", f"{result.time_to_goal_s:.1f} s"))
     lines.append(row("progress", f"{result.progress:.0%} (best {result.best_progress:.0%})"))
-    lines.append(row("final error", ", ".join(f"{name} {error:.3g}" for name, error in result.final_error.items())))
+    lines.append(row("final error", ", ".join(f"{name} {error:.3g}" for name, error in result.final_error.items()) or "-"))
     lines.append(row("moved", ", ".join(result.moved) or "-"))
     lines.append(row("disturbed", ", ".join(result.disturbed) or "-"))
     return lines
@@ -478,88 +513,192 @@ def _task_check(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
     return 1 if failures else 0
 
 
-class SimHand:
-    """Stands in for the robot (or your hand) on the simulated board."""
-
-    def __init__(self, board: Board, task: Task, play: str, delay_s: float = 0.5, seconds_per_travel: float = 2.0):
-        self.board = board
-        self.task = task
-        self.play = play
-        self.delay_s = delay_s
-        self.seconds_per_travel = seconds_per_travel
-        self.started: float | None = None
-        self._last: float | None = None
-
-    def __call__(self, now: float) -> None:
-        if self.started is None or self.play == "idle":
-            return
-        previous, self._last = self._last if self._last is not None else now, now
-        if now - self.started < self.delay_s:
-            return
-        bus = self.board.bus
-        for goal in self.task.goals:
-            spec = self.board.spec(goal.module)
-            cal = self.board.calibration.modules[goal.module]
-            target = goal.target if goal.target is not None else (max(goal.low, spec.work[0]) + min(goal.high, spec.work[1])) / 2
-            target_raw = spec.raw_from_value(target, cal.raw_lo, cal.raw_hi)
-            position = bus.read_position(spec.servo_id)
-            step = abs(cal.raw_hi - cal.raw_lo) / self.seconds_per_travel * (now - previous)
-            bus.push(spec.servo_id, max(-step, min(step, target_raw - position)))
-
-
 def _task_run(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
     if args.hz <= 0:
         raise UsageError("--hz must be greater than 0")
     task = find_task(args.task)
     session = open_session(args, hooks)
-    settings = motion_settings(args)
     with Board(session.bus, session.calibration) as board:
+        scorer = Scorer(task)
         hand = None
         if session.sim:
-            hand = SimHand(board, task, args.sim_play)
+            hand = SimHand(board, scorer, args.sim_play)
             session.clock = SimClock(session.bus, on_tick=hand)
-        if args.no_reset:
-            board.passive()
-            out.write(f"{task.name}: scoring from where the modules are now.\n")
-        else:
-            start = task.sample_start(random.Random(args.seed))
-            board.reset(start, settings, session.clock)
-            placed = ", ".join(f"{name} at {value:.3g}" for name, value in start.items())
-            out.write(f"{task.name}: start state in place ({placed}). Board passive.\n")
-        out.write(f'Instruction: "{task.instruction}"\n')
-
-        scorer = Scorer(task)
-        samples: list[Sample] = []
         view = LiveView(out, live=out.isatty())
-        origin = session.clock.now()
-        if hand:
-            hand.started = origin
-        interrupted = False
-        try:
-            while True:
-                t = session.clock.now() - origin
-                values = board.values()
-                samples.append(Sample(round(t, 4), values))
-                done = scorer.update(t, values)
-                if view.live:
-                    state = ", ".join(
-                        f"{goal.module} {format_value(values[goal.module], board.spec(goal.module).unit)}"
-                        for goal in task.goals
-                    )
-                    view.show([f"  {t:5.1f} s of {task.timeout_s:g} s   {state}   (Ctrl+C to stop)"])
-                if done:
-                    break
-                session.clock.sleep(1.0 / args.hz)
-        except KeyboardInterrupt:
-            interrupted = True
-            scorer.abort("operator stop")
-        result = scorer.result()
-        out.write("\n".join(describe_result(result)) + "\n")
+
+        def ready(start, instruction) -> None:
+            if args.no_reset:
+                out.write(f"{task.name}: scoring from where the modules are now.\n")
+            else:
+                placed = ", ".join(f"{name} at {value:.3g}" for name, value in start.items())
+                out.write(f"{task.name}: start state in place ({placed}). Board passive.\n")
+            out.write(f'Instruction: "{instruction}"\n')
+            if hand:
+                hand.start(session.clock.now())
+
+        def sample(t, values, live_scorer) -> None:
+            if not view.live:
+                return
+            step = live_scorer.steps[live_scorer.current_step]
+            state = ", ".join(
+                f"{goal.module} {format_value(values[goal.module], board.spec(goal.module).unit)}"
+                for goal in step.goals
+            ) or f"waiting, {max(0.0, step.hold_s - (t - live_scorer.step_clock)):.0f} s left"
+            where = f"step {live_scorer.current_step + 1} of {len(live_scorer.steps)}   " if len(live_scorer.steps) > 1 else ""
+            view.show([f"  {t:5.1f} s of {task.timeout_s:g} s   {where}{state}   (Ctrl+C to stop)"])
+
+        episode = run_episode(
+            board,
+            task,
+            session.clock,
+            motion_settings(args),
+            random.Random(args.seed),
+            reset=not args.no_reset,
+            hz=args.hz,
+            scorer=scorer,
+            on_ready=ready,
+            on_sample=sample,
+        )
+        out.write("\n".join(describe_result(episode.result)) + "\n")
         if args.trace:
-            path = save_trace(args.trace, samples)
+            path = save_trace(args.trace, episode.samples)
             out.write(f"Trace saved to {path}\n")
-            if interrupted:
+            if episode.interrupted:
                 out.write("Score it again later with: lebox score " f"{args.task} {path} --aborted 'operator stop'\n")
+    return 0
+
+
+def _task_build(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    import yaml
+
+    data = codes_to_dict(args.codes, args.name)
+    document = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, default_flow_style=None, width=100)
+    if args.output:
+        Path(args.output).write_text(document, encoding="utf-8")
+        task = Task.from_dict(data)
+        out.write(f"Wrote {args.output}: {len(task.steps)} step(s)\n  {task.signature}\n")
+    else:
+        out.write(document)
+    return 0
+
+
+def _codes(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    out.write(f"{'code':<6}{'plain sentence':<34}other wordings\n")
+    for code, plain, others in standard_steps():
+        out.write(f"{code:<6}{plain:<34}{'; '.join(others)}\n")
+    out.write(
+        "\nAlso: W30 waits 30 seconds, AS puts tile A back where it started, B50+D5 does both in one step.\n"
+        "A whole task is one line, with an optional start state before '>':  A1 B100 C4 D1 > C0 A2 D4 AS B0\n"
+    )
+    return 0
+
+
+def _suite_list(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    suite = load_suite(args.suite)
+    out.write(f"{suite.name} v{suite.version}: {len(suite.tasks)} tasks, {suite.episodes} episodes each\n")
+    for level in suite.levels:
+        out.write(f"\n{level}: {suite.titles[level]}\n")
+        for group in suite.groups(level):
+            out.write(f"  {group}: {suite.titles[f'{level}/{group}']}\n")
+            for item in suite.tasks:
+                if (item.level, item.group) == (level, group):
+                    out.write(f"    {item.code}\n")
+    return 0
+
+
+def describe_summary(rows, title: str) -> list[str]:
+    lines = [title, f"{'level':<9}{'group':<10}{'tasks':>6}{'episodes':>10}{'success':>12}{'95% interval':>16}{'steps done':>14}"]
+    for row in rows:
+        steps = f"{row.steps_done:.1f} of {row.steps_total:.1f}" if row.steps_total > 1 else "-"
+        lines.append(
+            f"{row.level:<9}{row.group:<10}{row.tasks:>6}{row.episodes:>10}"
+            f"{f'{row.successes} ({row.rate:.0%})':>12}{f'{row.low:.0%} to {row.high:.0%}':>16}{steps:>14}"
+        )
+    totals: dict[str, int] = {}
+    for row in rows:
+        if row.group == "all":
+            for outcome, count in row.outcomes.items():
+                totals[outcome] = totals.get(outcome, 0) + count
+    ordered = sorted(totals.items(), key=lambda pair: (-pair[1], pair[0]))
+    lines.append("Outcomes: " + ", ".join(f"{outcome} {count}" for outcome, count in ordered))
+    return lines
+
+
+def _suite_run(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    suite = load_suite(args.suite)
+    if args.episodes is not None and args.episodes < 1:
+        raise UsageError("--episodes must be 1 or more")
+    unknown = [level for level in (args.level or []) if level not in suite.levels]
+    if unknown:
+        raise UsageError(f"no level named {', '.join(unknown)} (have: {', '.join(suite.levels)})")
+    session = open_session(args, hooks)
+    skill = {"solve": 1.0, "mixed": 0.8, "idle": 1.0}[args.sim_play]
+    total = (args.episodes or suite.episodes) * sum(1 for item in suite.tasks if not args.level or item.level in args.level)
+    done = {"n": 0}
+
+    def progress(record: dict) -> None:
+        done["n"] += 1
+        result = record["result"]
+        out.write(f"{done['n']:>4}/{total}  {record['level']:<8}{record['code']:<24}{result['outcome']}\n")
+        out.flush()
+
+    records = run_suite(
+        suite,
+        lambda: (Board(session.bus, session.calibration), session.clock),
+        args.out,
+        episodes=args.episodes,
+        levels=args.level,
+        varied_wording=args.wording == "varied",
+        settings=motion_settings(args),
+        sim_play=("idle" if args.sim_play == "idle" else "solve") if session.sim else None,
+        sim_skill=skill,
+        progress=None if args.quiet else progress,
+    )
+    title = f"{suite.name} v{suite.version}: {args.episodes or suite.episodes} episode(s) per task, {args.wording} wording"
+    out.write("\n".join(describe_summary(summarise(records), title)) + "\n")
+    out.write(f"Results saved to {Path(args.out) / 'results.jsonl'}\n")
+    return 0
+
+
+def _suite_report(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    records = load_results(args.results)
+    first = records[0]
+    title = f"{first['suite']} v{first['version']}: {len(records)} episodes, {first['wording']} wording"
+    out.write("\n".join(describe_summary(summarise(records), title)) + "\n")
+    return 0
+
+
+def _task_import(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    import yaml
+
+    source = Path(args.table)
+    try:
+        text = source.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise TaskError(f"cannot read table {source}: {exc.strerror or exc}") from None
+    name = args.name or source.stem.lower().replace(" ", "_")
+    try:
+        data = table_to_dict(text, name)
+    except TaskError as exc:
+        raise TaskError(f"{source}: {exc}") from None
+    document = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, default_flow_style=None, width=100)
+    if args.output:
+        Path(args.output).write_text(document, encoding="utf-8")
+        task = Task.from_dict(data)
+        out.write(f"Wrote {args.output}: {len(task.steps)} step(s)\n  {task.signature}\n")
+    else:
+        out.write(document)
+    return 0
+
+
+def _board(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    out.write(f"{'tile':<5}{'module':<9}{'servo id':>9}  {'called':<18}{'scale':<18}{'markings':<26}codes\n")
+    for spec in DEFAULT_MODULES:
+        unit = f" {spec.unit}" if spec.unit else ""
+        scale = f"{spec.work[0]:g} to {spec.work[1]:g}{unit}"
+        markings = ", ".join(marking.label for marking in spec.markings)
+        codes = " ".join(f"{spec.letter}{number:g}" for number in spec.standard_codes)
+        out.write(f"{spec.letter:<5}{spec.name:<9}{spec.servo_id:>9}  {spec.phrase:<18}{scale:<18}{markings:<26}{codes}\n")
     return 0
 
 
@@ -597,6 +736,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ports = commands.add_parser("ports", help="list serial ports")
     ports.set_defaults(run=_ports)
+
+    board = commands.add_parser("board", help="show the modules: servo ids, names, scales and markings")
+    board.set_defaults(run=_board)
 
     ping = commands.add_parser("ping", help="find servos and show their state (read only)")
     _board_options(ping)
@@ -651,7 +793,7 @@ def build_parser() -> argparse.ArgumentParser:
     selftest.add_argument("--json", metavar="FILE", help="save every move to this file")
     selftest.set_defaults(run=_selftest)
 
-    task = commands.add_parser("task", help="list, show, check and run tasks")
+    task = commands.add_parser("task", help="list, show, check, build, import and run tasks")
     task_commands = task.add_subparsers(dest="task_command", required=True, metavar="action")
     task_list = task_commands.add_parser("list", help="list the built-in tasks")
     task_list.set_defaults(run=_task_list)
@@ -661,6 +803,24 @@ def build_parser() -> argparse.ArgumentParser:
     task_check = task_commands.add_parser("check", help="check task files for mistakes")
     task_check.add_argument("files", nargs="+", metavar="FILE", help="task file(s) to check")
     task_check.set_defaults(run=_task_check)
+    task_import = task_commands.add_parser(
+        "import",
+        help="turn a task written as a table (CSV) into a task file",
+        description="Turn a task written as a table (CSV, one row per step) into a task file.",
+    )
+    task_import.add_argument("table", help="CSV file: columns kind, say, one per module, within_s, hold_s, early_s")
+    task_import.add_argument("--name", help="task name (default: the file name)")
+    task_import.add_argument("-o", "--output", metavar="FILE", help="write the task file here instead of printing it")
+    task_import.set_defaults(run=_task_import)
+    task_build = task_commands.add_parser(
+        "build",
+        help="turn a line of step codes into a task file",
+        description="Turn a line of step codes, such as 'A1 B100 C4 D1 > C0 A2 D4 AS B0', into a task file.",
+    )
+    task_build.add_argument("codes", help="step codes, in quotes")
+    task_build.add_argument("--name", help="task name (default: made from the codes)")
+    task_build.add_argument("-o", "--output", metavar="FILE", help="write the task file here instead of printing it")
+    task_build.set_defaults(run=_task_build)
     task_run = task_commands.add_parser(
         "run",
         help="reset, then score an episode live",
@@ -675,6 +835,33 @@ def build_parser() -> argparse.ArgumentParser:
     task_run.add_argument("--hz", type=float, default=20.0, help="samples per second (default: 20)")
     task_run.add_argument("--sim-play", choices=["solve", "idle"], default="solve", help="what the simulated hand does (with --sim)")
     task_run.set_defaults(run=_task_run)
+
+    codes = commands.add_parser("codes", help="list the standard step codes and their wordings")
+    codes.set_defaults(run=_codes)
+
+    suite = commands.add_parser("suite", help="the standard test: list it, run it, report on a run")
+    suite_commands = suite.add_subparsers(dest="suite_command", required=True, metavar="action")
+    suite_list = suite_commands.add_parser("list", help="show the levels and tasks of the standard test")
+    suite_list.add_argument("--suite", metavar="FILE", help="a suite file, instead of the built-in standard test")
+    suite_list.set_defaults(run=_suite_list)
+    suite_run = suite_commands.add_parser(
+        "run",
+        help="run the standard test and report success by level",
+        description="Run every task of the standard test several times and report success by level.",
+    )
+    _board_options(suite_run)
+    _motion_options(suite_run)
+    suite_run.add_argument("--suite", metavar="FILE", help="a suite file, instead of the built-in standard test")
+    suite_run.add_argument("--out", required=True, metavar="DIR", help="folder for results.jsonl and the traces")
+    suite_run.add_argument("--episodes", type=int, metavar="N", help="episodes per task (default: the suite's own number)")
+    suite_run.add_argument("--level", action="append", metavar="ID", help="run this level only (repeatable)")
+    suite_run.add_argument("--wording", choices=["plain", "varied"], default="plain", help="plain sentences, or one of the alternatives per episode")
+    suite_run.add_argument("--sim-play", choices=["solve", "mixed", "idle"], default="solve", help="what the simulated hand does (with --sim)")
+    suite_run.add_argument("--quiet", action="store_true", help="print only the summary")
+    suite_run.set_defaults(run=_suite_run)
+    suite_report = suite_commands.add_parser("report", help="print the summary of an earlier run")
+    suite_report.add_argument("results", help="the run's folder, or its results.jsonl")
+    suite_report.set_defaults(run=_suite_report)
 
     scoring = commands.add_parser(
         "score",
@@ -696,7 +883,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None, hooks: Ho
     except UsageError as exc:
         print(exc, file=sys.stderr)
         return 2
-    except (CalibrationError, BusError, MotionError, ModuleError, TaskError, TraceError, ScoreError) as exc:
+    except (CalibrationError, BusError, MotionError, ModuleError, TaskError, TraceError, ScoreError, SuiteError) as exc:
         print(f"lebox: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

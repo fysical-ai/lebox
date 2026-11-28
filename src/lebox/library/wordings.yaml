@@ -1,0 +1,96 @@
+# Wordings for the standard steps.
+#
+# The first sentence of each list is the plain one. The others are alternatives
+# that mean the same step; one is picked per episode when varied wording is on.
+# {n} in the wait and put-back entries is filled in when the step is built.
+
+A0:
+  - Set the black switch to O
+  - Move the black switch to the middle position
+  - Switch the black switch off
+A1:
+  - Set the black switch to I
+  - Flip the black switch to position I
+  - Throw the black switch over to I
+A2:
+  - Set the black switch to II
+  - Flip the black switch to position II
+  - Throw the black switch over to II
+
+B0:
+  - Set the blue valve to CLOSED
+  - Close the blue valve
+  - Turn the blue valve all the way closed
+B25:
+  - Set the blue valve to 25%
+  - Turn the blue valve to 25
+  - Open the blue valve a quarter of the way
+B50:
+  - Set the blue valve to 50%
+  - Turn the blue valve to 50
+  - Set the blue valve half open
+B75:
+  - Set the blue valve to 75%
+  - Turn the blue valve to 75
+  - Open the blue valve three quarters of the way
+B100:
+  - Set the blue valve to OPEN
+  - Open the blue valve fully
+  - Turn the blue valve all the way open
+
+C0:
+  - Set the red plunger to 0
+  - Push the red plunger all the way in
+  - Press the red plunger down as far as it goes
+C2:
+  - Set the red plunger to 2
+  - Set the red plunger half way
+  - Leave the red plunger half way between in and out
+C4:
+  - Set the red plunger to 4
+  - Pull the red plunger all the way out
+  - Pull the red plunger up as far as it goes
+
+D1:
+  - Set the white slider to 1
+  - Slide the white slider to 1
+  - Move the white slider all the way to 1
+D2:
+  - Set the white slider to 2
+  - Slide the white slider to 2
+  - Move the white slider to mark 2
+D3:
+  - Set the white slider to 3
+  - Slide the white slider to 3
+  - Move the white slider to the middle
+D4:
+  - Set the white slider to 4
+  - Slide the white slider to 4
+  - Move the white slider to mark 4
+D5:
+  - Set the white slider to 5
+  - Slide the white slider to 5
+  - Move the white slider all the way to 5
+
+wait:
+  - Wait {n} seconds
+  - Pause for {n} seconds
+  - Hold still for {n} seconds
+
+back:
+  A:
+    - Put the black switch back where it started
+    - Return the black switch to its starting position
+    - Move the black switch back to where it was
+  B:
+    - Put the blue valve back where it started
+    - Return the blue valve to its starting position
+    - Turn the blue valve back to where it was
+  C:
+    - Put the red plunger back where it started
+    - Return the red plunger to its starting position
+    - Move the red plunger back to where it was
+  D:
+    - Put the white slider back where it started
+    - Return the white slider to its starting position
+    - Slide the white slider back to where it was

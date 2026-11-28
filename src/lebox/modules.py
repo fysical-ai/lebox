@@ -55,6 +55,20 @@ class ModuleSpec:
     snap: float
     """How close to a marking (in scale units) still reads as 'at' it."""
     description: str = ""
+    noun: str = ""
+    """What people call the element, e.g. ``valve`` for the dial. Defaults to the module name."""
+    colour: str = ""
+    """The colour of the part the robot handles, used in generated instructions."""
+    letter: str = ""
+    """The tile letter used in step codes: ``A`` for the switch, ``B`` for the valve, and so on."""
+    code_map: tuple[tuple[float, float], ...] = ()
+    """Step-code number to scale value, where the two differ (the switch: 0, 1, 2 for O, I, II).
+    Empty means the code number is the scale value itself, as printed on the tile."""
+    standard: tuple[float, ...] = ()
+    """The code numbers of the standard states, where they are not simply every marking
+    (the plunger: 0, 2 and 4 for in, half way and out)."""
+    task_tol: float | None = None
+    """The usual tolerance of a task goal, where a robot cannot be asked to hit ``snap``."""
 
     def __post_init__(self) -> None:
         lo, hi = self.stops
@@ -64,6 +78,64 @@ class ModuleSpec:
             raise ValueError(f"{self.name}: work range {self.work} must lie inside stops {self.stops}")
         if not self.markings:
             raise ValueError(f"{self.name}: needs at least one marking")
+        if self.task_tol is not None and self.task_tol <= 0:
+            raise ValueError(f"{self.name}: task_tol must be greater than 0")
+
+    @property
+    def tolerance(self) -> float:
+        """The usual tolerance of a task goal on this module, in scale units."""
+        return self.snap if self.task_tol is None else self.task_tol
+
+    @property
+    def phrase(self) -> str:
+        """How the element is named in a sentence: ``the blue valve``."""
+        return " ".join(part for part in ("the", self.colour, self.noun or self.name) if part)
+
+    def phrase_value(self, value: float) -> str:
+        """A scale value as it would be said: ``II``, ``CLOSED``, ``50%``, ``3``."""
+        for marking in self.markings:
+            # A marking on a hard stop resolves to the end of the work range; say the marking.
+            clamped = min(self.work[1], max(self.work[0], marking.value))
+            if math.isclose(clamped, value, abs_tol=1e-9):
+                if not _is_number(marking.label):
+                    return marking.label
+                value = marking.value
+                break
+        if self.unit == "%":
+            return f"{value:g}%"
+        if self.unit == "deg":
+            return f"{value:g} degrees"
+        return f"{value:g}"
+
+    @property
+    def standard_codes(self) -> tuple[float, ...]:
+        """The code numbers of the standard states: by default the positions marked on the tile."""
+        if self.standard:
+            return self.standard
+        if self.code_map:
+            return tuple(number for number, _ in self.code_map)
+        return tuple(marking.value for marking in self.markings)
+
+    def value_for_code(self, number: float) -> float:
+        """The scale value a step-code number stands for, before it is checked against the work range."""
+        if self.code_map:
+            for code, value in self.code_map:
+                if math.isclose(code, number, abs_tol=1e-9):
+                    return value
+            allowed = ", ".join(f"{self.letter}{code:g}" for code, _ in self.code_map)
+            raise ModuleError(f"{self.letter}{number:g} is not a state of the {self.noun or self.name}; use {allowed}")
+        return number
+
+    def code_for_value(self, value: float) -> str | None:
+        """The step code for a scale value, e.g. ``B50``; ``None`` if there is none."""
+        if not self.letter:
+            return None
+        for number in self.standard_codes:
+            standard = self.value_for_code(number)
+            clamped = min(self.work[1], max(self.work[0], standard))
+            if math.isclose(clamped, value, abs_tol=1e-9):
+                return f"{self.letter}{number:g}"
+        return None if self.code_map else f"{self.letter}{value:g}"
 
     @property
     def expected_travel_ticks(self) -> float:
@@ -127,6 +199,14 @@ class ModuleSpec:
         return value
 
 
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
 def _arc_deg(travel_mm: float, gear_radius_mm: float) -> float:
     """Servo rotation that moves a rack ``travel_mm`` on a sector gear of the given radius."""
     return math.degrees(travel_mm / gear_radius_mm)
@@ -150,6 +230,10 @@ SWITCH = ModuleSpec(
     servo_travel_deg=84.0,
     snap=5.0,
     description="Knife switch, direct drive. I at the front, O in the middle, II at the rear.",
+    noun="switch",
+    colour="black",
+    letter="A",
+    code_map=((0.0, 0.0), (1.0, -40.0), (2.0, 40.0)),  # the printed O, I, II read as 0, 1, 2
 )
 
 DIAL = ModuleSpec(
@@ -168,6 +252,9 @@ DIAL = ModuleSpec(
     servo_travel_deg=274.0,
     snap=3.0,
     description="Valve handle, direct drive. Clockwise closes; 0 % is the clockwise end.",
+    noun="valve",
+    colour="blue",
+    letter="B",
 )
 
 PLUNGER = ModuleSpec(
@@ -183,6 +270,13 @@ PLUNGER = ModuleSpec(
     servo_travel_deg=_arc_deg(20.0, 34.5),
     snap=0.15,
     description="Push-pull plunger on a sector gear (34.5 mm). 0 is pushed in, 4 is pulled out.",
+    noun="plunger",
+    colour="red",
+    letter="C",
+    # The rings are 5 mm apart: too fine for an arm to pick one out. The standard
+    # states are in, half way and out, and a goal allows 2.5 mm either side.
+    standard=(0, 2, 4),
+    task_tol=0.5,
 )
 
 SLIDER = ModuleSpec(
@@ -196,6 +290,9 @@ SLIDER = ModuleSpec(
     servo_travel_deg=_arc_deg(40.6, 36.0),
     snap=0.15,
     description="Slider on a sector gear (36 mm). Marks 1 to 5, 10 mm apart.",
+    noun="slider",
+    colour="white",
+    letter="D",
 )
 
 DEFAULT_MODULES: tuple[ModuleSpec, ...] = (SWITCH, DIAL, PLUNGER, SLIDER)

@@ -47,7 +47,7 @@ def test_defaults():
 
 def test_builtin_tasks_all_load_and_cover_every_module():
     names = builtin_names()
-    assert len(names) == 11
+    assert len(names) == 13
     covered = set()
     for name in names:
         task = load_builtin(name)
@@ -128,8 +128,9 @@ def test_others_tol():
     [
         ({"name": None}, "'name' is required"),
         ({"name": "Slider To 3"}, "'name' is required"),
-        ({"instruction": None}, "'instruction' is required"),
-        ({"instruction": "  "}, "'instruction' is required"),
+        ({"instruction": "  "}, "'instruction' must be a sentence"),
+        ({"instruction": []}, "'instruction' must be a sentence"),
+        ({"instruction": ["Move it", 3]}, "'instruction' must be a sentence"),
         ({"goal": None}, "'goal' is required"),
         ({"goal": {}}, "'goal' is required"),
         ({"goal": {"lever": 1}}, "unknown module 'lever'"),
