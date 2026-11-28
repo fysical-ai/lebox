@@ -55,6 +55,10 @@ class ModuleSpec:
     snap: float
     """How close to a marking (in scale units) still reads as 'at' it."""
     description: str = ""
+    noun: str = ""
+    """What people call the element, e.g. ``valve`` for the dial. Defaults to the module name."""
+    colour: str = ""
+    """The colour of the part the robot handles, used in generated instructions."""
 
     def __post_init__(self) -> None:
         lo, hi = self.stops
@@ -64,6 +68,27 @@ class ModuleSpec:
             raise ValueError(f"{self.name}: work range {self.work} must lie inside stops {self.stops}")
         if not self.markings:
             raise ValueError(f"{self.name}: needs at least one marking")
+
+    @property
+    def phrase(self) -> str:
+        """How the element is named in a sentence: ``the blue valve``."""
+        return " ".join(part for part in ("the", self.colour, self.noun or self.name) if part)
+
+    def phrase_value(self, value: float) -> str:
+        """A scale value as it would be said: ``II``, ``CLOSED``, ``50%``, ``3``."""
+        for marking in self.markings:
+            # A marking on a hard stop resolves to the end of the work range; say the marking.
+            clamped = min(self.work[1], max(self.work[0], marking.value))
+            if math.isclose(clamped, value, abs_tol=1e-9):
+                if not _is_number(marking.label):
+                    return marking.label
+                value = marking.value
+                break
+        if self.unit == "%":
+            return f"{value:g}%"
+        if self.unit == "deg":
+            return f"{value:g} degrees"
+        return f"{value:g}"
 
     @property
     def expected_travel_ticks(self) -> float:
@@ -127,6 +152,14 @@ class ModuleSpec:
         return value
 
 
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
 def _arc_deg(travel_mm: float, gear_radius_mm: float) -> float:
     """Servo rotation that moves a rack ``travel_mm`` on a sector gear of the given radius."""
     return math.degrees(travel_mm / gear_radius_mm)
@@ -150,6 +183,8 @@ SWITCH = ModuleSpec(
     servo_travel_deg=84.0,
     snap=5.0,
     description="Knife switch, direct drive. I at the front, O in the middle, II at the rear.",
+    noun="switch",
+    colour="black",
 )
 
 DIAL = ModuleSpec(
@@ -168,6 +203,8 @@ DIAL = ModuleSpec(
     servo_travel_deg=274.0,
     snap=3.0,
     description="Valve handle, direct drive. Clockwise closes; 0 % is the clockwise end.",
+    noun="valve",
+    colour="blue",
 )
 
 PLUNGER = ModuleSpec(
@@ -183,6 +220,8 @@ PLUNGER = ModuleSpec(
     servo_travel_deg=_arc_deg(20.0, 34.5),
     snap=0.15,
     description="Push-pull plunger on a sector gear (34.5 mm). 0 is pushed in, 4 is pulled out.",
+    noun="plunger",
+    colour="red",
 )
 
 SLIDER = ModuleSpec(
@@ -196,6 +235,8 @@ SLIDER = ModuleSpec(
     servo_travel_deg=_arc_deg(40.6, 36.0),
     snap=0.15,
     description="Slider on a sector gear (36 mm). Marks 1 to 5, 10 mm apart.",
+    noun="slider",
+    colour="white",
 )
 
 DEFAULT_MODULES: tuple[ModuleSpec, ...] = (SWITCH, DIAL, PLUNGER, SLIDER)

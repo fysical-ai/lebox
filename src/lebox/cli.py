@@ -20,7 +20,7 @@ from .calibration import Calibration, CalibrationError, default_path
 from .modules import DEFAULT_MODULES, ModuleError, ModuleSpec
 from .motion import Clock, MotionError, MotionSettings, SimClock
 from .scorer import Result, ScoreError, Scorer, score
-from .task import Start, Task, TaskError, builtin_names, find_task, load_builtin
+from .task import Start, Task, TaskError, builtin_names, find_task, load_builtin, table_to_dict
 from .trace import Sample, TraceError, load_trace, save_trace
 
 BAR_WIDTH = 25
@@ -159,17 +159,36 @@ def _describe_start(start: Start) -> str:
     return f"anywhere from {start.values[0]:g} to {start.values[1]:g}"
 
 
+def _describe_goal(goal) -> str:
+    if goal.from_start:
+        return f"{goal.module}: back where it started (within {goal.high:g})"
+    target = f" (target {goal.target:g})" if goal.target is not None else ""
+    return f"{goal.module}: {goal.low:g} to {goal.high:g}{target}"
+
+
 def describe_task(task: Task) -> list[str]:
-    lines = [task.name, f"  instruction  {task.instruction}"]
+    lines = [task.name, f"  instruction  {task.instruction}", f"  {'standard':<11}  {task.signature}"]
     label = "start"
     for module, start in task.start.items():
         lines.append(f"  {label:<11}  {module}: {_describe_start(start)}")
         label = ""
-    label = "goal"
-    for goal in task.goals:
-        target = f" (target {goal.target:g})" if goal.target is not None else ""
-        lines.append(f"  {label:<11}  {goal.module}: {goal.low:g} to {goal.high:g}{target}")
-        label = ""
+    if len(task.steps) == 1 and task.steps[0].kind == "reach":
+        label = "goal"
+        for goal in task.goals:
+            lines.append(f"  {label:<11}  {_describe_goal(goal)}")
+            label = ""
+    else:
+        for index, step in enumerate(task.steps):
+            if step.kind == "hold":
+                early = f" (may move on {step.early_s:g} s early)" if step.early_s else ""
+                text = f"hold   {step.hold_s:g} s{early}"
+            else:
+                within = f", within {step.within_s:g} s" if step.within_s is not None else ""
+                text = "reach  " + "; ".join(_describe_goal(goal) for goal in step.goals) + within
+            lines.append(f"  {f'step {index}':<11}  {text}")
+    variants = len(task.instructions) or max(1, _product(len(step.say) or 1 for step in task.steps))
+    if variants > 1:
+        lines.append(f"  {'wordings':<11}  {variants}")
     others = task.others
     if task.others == "unchanged" and task.others_tol:
         others += " (" + ", ".join(f"{name} within {tol:g}" for name, tol in task.others_tol.items()) + ")"
@@ -179,6 +198,13 @@ def describe_task(task: Task) -> list[str]:
     return lines
 
 
+def _product(numbers) -> int:
+    total = 1
+    for number in numbers:
+        total *= number
+    return total
+
+
 def describe_result(result: Result) -> list[str]:
     def row(label: str, text: str) -> str:
         return f"  {label:<13}  {text}"
@@ -186,11 +212,14 @@ def describe_result(result: Result) -> list[str]:
     lines = [f"{result.task}: {result.outcome}"]
     if result.abort_reason:
         lines.append(row("reason", result.abort_reason))
+    if result.steps_total > 1:
+        stopped = "" if result.failed_step is None else f" (stopped at step {result.failed_step})"
+        lines.append(row("steps", f"{result.steps_completed} of {result.steps_total}{stopped}"))
     lines.append(row("duration", f"{result.duration_s:.1f} s"))
     if result.time_to_goal_s is not None:
         lines.append(row("time to goal", f"{result.time_to_goal_s:.1f} s"))
     lines.append(row("progress", f"{result.progress:.0%} (best {result.best_progress:.0%})"))
-    lines.append(row("final error", ", ".join(f"{name} {error:.3g}" for name, error in result.final_error.items())))
+    lines.append(row("final error", ", ".join(f"{name} {error:.3g}" for name, error in result.final_error.items()) or "-"))
     lines.append(row("moved", ", ".join(result.moved) or "-"))
     lines.append(row("disturbed", ", ".join(result.disturbed) or "-"))
     return lines
@@ -479,11 +508,15 @@ def _task_check(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
 
 
 class SimHand:
-    """Stands in for the robot (or your hand) on the simulated board."""
+    """Stands in for the robot (or your hand) on the simulated board.
 
-    def __init__(self, board: Board, task: Task, play: str, delay_s: float = 0.5, seconds_per_travel: float = 2.0):
+    It works on whichever step the scorer is on: it moves the goal modules of
+    a reach step to their targets and keeps still during a hold.
+    """
+
+    def __init__(self, board: Board, scorer: Scorer, play: str, delay_s: float = 0.5, seconds_per_travel: float = 2.0):
         self.board = board
-        self.task = task
+        self.scorer = scorer
         self.play = play
         self.delay_s = delay_s
         self.seconds_per_travel = seconds_per_travel
@@ -496,15 +529,18 @@ class SimHand:
         previous, self._last = self._last if self._last is not None else now, now
         if now - self.started < self.delay_s:
             return
+        step = self.scorer.steps[self.scorer.current_step]
         bus = self.board.bus
-        for goal in self.task.goals:
+        for goal in step.goals:
+            if goal.from_start:
+                return  # the scorer has not seen its first sample yet
             spec = self.board.spec(goal.module)
             cal = self.board.calibration.modules[goal.module]
             target = goal.target if goal.target is not None else (max(goal.low, spec.work[0]) + min(goal.high, spec.work[1])) / 2
             target_raw = spec.raw_from_value(target, cal.raw_lo, cal.raw_hi)
             position = bus.read_position(spec.servo_id)
-            step = abs(cal.raw_hi - cal.raw_lo) / self.seconds_per_travel * (now - previous)
-            bus.push(spec.servo_id, max(-step, min(step, target_raw - position)))
+            step_size = abs(cal.raw_hi - cal.raw_lo) / self.seconds_per_travel * (now - previous)
+            bus.push(spec.servo_id, max(-step_size, min(step_size, target_raw - position)))
 
 
 def _task_run(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
@@ -513,22 +549,23 @@ def _task_run(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
     task = find_task(args.task)
     session = open_session(args, hooks)
     settings = motion_settings(args)
+    rng = random.Random(args.seed)
     with Board(session.bus, session.calibration) as board:
+        scorer = Scorer(task)
         hand = None
         if session.sim:
-            hand = SimHand(board, task, args.sim_play)
+            hand = SimHand(board, scorer, args.sim_play)
             session.clock = SimClock(session.bus, on_tick=hand)
         if args.no_reset:
             board.passive()
             out.write(f"{task.name}: scoring from where the modules are now.\n")
         else:
-            start = task.sample_start(random.Random(args.seed))
+            start = task.sample_start(rng)
             board.reset(start, settings, session.clock)
             placed = ", ".join(f"{name} at {value:.3g}" for name, value in start.items())
             out.write(f"{task.name}: start state in place ({placed}). Board passive.\n")
-        out.write(f'Instruction: "{task.instruction}"\n')
+        out.write(f'Instruction: "{task.sample_instruction(rng)}"\n')
 
-        scorer = Scorer(task)
         samples: list[Sample] = []
         view = LiveView(out, live=out.isatty())
         origin = session.clock.now()
@@ -542,11 +579,13 @@ def _task_run(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
                 samples.append(Sample(round(t, 4), values))
                 done = scorer.update(t, values)
                 if view.live:
+                    step = scorer.steps[scorer.current_step]
                     state = ", ".join(
                         f"{goal.module} {format_value(values[goal.module], board.spec(goal.module).unit)}"
-                        for goal in task.goals
-                    )
-                    view.show([f"  {t:5.1f} s of {task.timeout_s:g} s   {state}   (Ctrl+C to stop)"])
+                        for goal in step.goals
+                    ) or f"waiting, {max(0.0, step.hold_s - (t - scorer.step_clock)):.0f} s left"
+                    where = f"step {scorer.current_step + 1} of {len(scorer.steps)}   " if len(scorer.steps) > 1 else ""
+                    view.show([f"  {t:5.1f} s of {task.timeout_s:g} s   {where}{state}   (Ctrl+C to stop)"])
                 if done:
                     break
                 session.clock.sleep(1.0 / args.hz)
@@ -560,6 +599,39 @@ def _task_run(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
             out.write(f"Trace saved to {path}\n")
             if interrupted:
                 out.write("Score it again later with: lebox score " f"{args.task} {path} --aborted 'operator stop'\n")
+    return 0
+
+
+def _task_import(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    import yaml
+
+    source = Path(args.table)
+    try:
+        text = source.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise TaskError(f"cannot read table {source}: {exc.strerror or exc}") from None
+    name = args.name or source.stem.lower().replace(" ", "_")
+    try:
+        data = table_to_dict(text, name)
+    except TaskError as exc:
+        raise TaskError(f"{source}: {exc}") from None
+    document = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, default_flow_style=None, width=100)
+    if args.output:
+        Path(args.output).write_text(document, encoding="utf-8")
+        task = Task.from_dict(data)
+        out.write(f"Wrote {args.output}: {len(task.steps)} step(s)\n  {task.signature}\n")
+    else:
+        out.write(document)
+    return 0
+
+
+def _board(args: argparse.Namespace, out: TextIO, hooks: Hooks) -> int:
+    out.write(f"{'module':<9}{'servo id':>9}  {'called':<18}{'scale':<18}markings\n")
+    for spec in DEFAULT_MODULES:
+        unit = f" {spec.unit}" if spec.unit else ""
+        scale = f"{spec.work[0]:g} to {spec.work[1]:g}{unit}"
+        markings = ", ".join(marking.label for marking in spec.markings)
+        out.write(f"{spec.name:<9}{spec.servo_id:>9}  {spec.phrase:<18}{scale:<18}{markings}\n")
     return 0
 
 
@@ -597,6 +669,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ports = commands.add_parser("ports", help="list serial ports")
     ports.set_defaults(run=_ports)
+
+    board = commands.add_parser("board", help="show the modules: servo ids, names, scales and markings")
+    board.set_defaults(run=_board)
 
     ping = commands.add_parser("ping", help="find servos and show their state (read only)")
     _board_options(ping)
@@ -651,7 +726,7 @@ def build_parser() -> argparse.ArgumentParser:
     selftest.add_argument("--json", metavar="FILE", help="save every move to this file")
     selftest.set_defaults(run=_selftest)
 
-    task = commands.add_parser("task", help="list, show, check and run tasks")
+    task = commands.add_parser("task", help="list, show, check, import and run tasks")
     task_commands = task.add_subparsers(dest="task_command", required=True, metavar="action")
     task_list = task_commands.add_parser("list", help="list the built-in tasks")
     task_list.set_defaults(run=_task_list)
@@ -661,6 +736,15 @@ def build_parser() -> argparse.ArgumentParser:
     task_check = task_commands.add_parser("check", help="check task files for mistakes")
     task_check.add_argument("files", nargs="+", metavar="FILE", help="task file(s) to check")
     task_check.set_defaults(run=_task_check)
+    task_import = task_commands.add_parser(
+        "import",
+        help="turn a task written as a table (CSV) into a task file",
+        description="Turn a task written as a table (CSV, one row per step) into a task file.",
+    )
+    task_import.add_argument("table", help="CSV file: columns kind, say, one per module, within_s, hold_s, early_s")
+    task_import.add_argument("--name", help="task name (default: the file name)")
+    task_import.add_argument("-o", "--output", metavar="FILE", help="write the task file here instead of printing it")
+    task_import.set_defaults(run=_task_import)
     task_run = task_commands.add_parser(
         "run",
         help="reset, then score an episode live",

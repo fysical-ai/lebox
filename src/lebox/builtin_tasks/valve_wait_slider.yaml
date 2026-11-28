@@ -1,0 +1,14 @@
+name: valve_wait_slider
+start:
+  dial: {range: [0, 30]}
+  slider: {sample: [1, 2]}
+steps:
+  - say: ["Turn the blue valve to 50%", "Set the blue valve half open"]
+    reach: {dial: 50}
+    within_s: 20
+  - say: ["Wait 30 seconds", "Pause for half a minute"]
+    hold_s: 30
+    early_s: 5
+  - say: ["Slide the slider to 5", "Move the white slider all the way to 5"]
+    reach: {slider: 5}
+    within_s: 20

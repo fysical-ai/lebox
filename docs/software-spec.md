@@ -38,7 +38,9 @@ Rules:
 
 To do before the first powered run: stress estimate from CAD for the dial stop lug and the switch slot ends at the capped torque.
 
-## Success
+## Tasks and success
+The task format and the scoring rules are described in full in `docs/tasks.md`. In short: a task is an ordered list of reach and hold steps with relative time windows; the robot gets the whole instruction up front; the steps are the definition and the wording is a separate layer; a standard description is generated from the steps. What follows in this section is the original one-step design, which is now the one-step case.
+
 Three layers: state (raw encoders, logged every frame), task (written once), outcome (computed, never hand-labelled). Any episode can be re-scored later under a new definition.
 
 Outcomes: `success`, `late`, `side_effect`, `overshoot`, `partial`, `wrong_module`, `no_contact`, `aborted`. Metrics: progress (0-1, at the end and best), final error per goal module, time to goal, duration, which modules moved and which were left disturbed.
