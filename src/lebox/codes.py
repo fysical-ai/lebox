@@ -4,11 +4,12 @@ A code is a tile letter and the number printed on the tile::
 
     A0 A1 A2              switch at O, I, II (the printed symbols read as 0, 1, 2)
     B0 B25 B50 B75 B100   valve at CLOSED, 25, 50, 75, OPEN
-    C0 .. C4              plunger at ring 0 (pushed in) to ring 4 (pulled out)
+    C0 C2 C4              plunger pushed in, half way, pulled out (rings 0, 2, 4)
     D1 .. D5              slider at marks 1 to 5
 
-These eighteen are the standard states. The valve, plunger and slider also
-take values in between (``B37``, ``D2.5``); those are legal but not standard.
+These sixteen are the standard states. The valve, plunger and slider also
+take values in between (``B37``, ``C1``, ``D2.5``); those are legal but not
+standard.
 
 Three more codes::
 
@@ -163,7 +164,7 @@ def codes_to_dict(text: str, name: str | None = None, specs: Iterable[ModuleSpec
         options = []
         for number in spec.standard_codes:
             value = min(spec.work[1], max(spec.work[0], spec.value_for_code(number)))
-            if target == "start" or abs(value - float(target)) > 2 * spec.snap:
+            if target == "start" or abs(value - float(target)) > 2 * spec.tolerance:
                 options.append(int(value) if float(value).is_integer() else value)
         start[module] = {"sample": options}
 
@@ -204,11 +205,11 @@ def codes_for(task: Task) -> str | None:
             if spec is None or not spec.letter:
                 return None
             if goal.from_start:
-                if abs(goal.high - spec.snap) > 1e-9:
+                if abs(goal.high - spec.tolerance) > 1e-9:
                     return None
                 parts.append(f"{spec.letter}S")
                 continue
-            if goal.target is None or abs((goal.high - goal.low) / 2 - spec.snap) > 1e-9:
+            if goal.target is None or abs((goal.high - goal.low) / 2 - spec.tolerance) > 1e-9:
                 return None
             code = spec.code_for_value(goal.target)
             if code is None:

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from lebox import OUTCOMES, Sample, ScoreError, Scorer, Task, load_builtin, load_trace, save_trace, score
+from lebox import OUTCOMES, Sample, ScoreError, Scorer, Task, find_task, load_builtin, load_trace, save_trace, score
 
 SLIDER_TO_3 = load_builtin("slider_to_3")
 
@@ -145,6 +145,16 @@ def test_plunger_pushed_onto_its_stop_counts_as_pushed_in(episode):
     push = load_builtin("plunger_push")
     result = episode(start={"plunger": 3.0}).play(push, [(0.0, 1.0, "plunger", 0.0)])
     assert result.outcome == "success"
+
+
+def test_plunger_half_way_allows_half_a_ring_either_side(episode):
+    half = find_task("C4 > C2")
+    near = episode(start={"plunger": 3.9}).play(half, [(0.0, 1.0, "plunger", 2.4)])  # 2 mm from the middle
+    assert near.outcome == "success"
+    short = episode(start={"plunger": 3.9}).play(half, [(0.0, 1.0, "plunger", 2.7)])  # 3.5 mm from it
+    assert short.outcome == "partial"
+    past = episode(start={"plunger": 3.9}).play(half, [(0.0, 1.0, "plunger", 0.0)])  # pushed straight through
+    assert past.outcome == "overshoot"
 
 
 def test_abort_marks_the_episode_and_overrides_the_outcome(episode):

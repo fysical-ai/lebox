@@ -15,9 +15,27 @@ def test_the_code_number_is_the_number_printed_on_the_tile():
     assert [SWITCH.value_for_code(n) for n in (0, 1, 2)] == [0.0, -40.0, 40.0]
     assert SWITCH.standard_codes == (0.0, 1.0, 2.0)
     assert DIAL.standard_codes == (0.0, 25.0, 50.0, 75.0, 100.0) and DIAL.value_for_code(50) == 50
-    assert PLUNGER.standard_codes == (0.0, 1.0, 2.0, 3.0, 4.0)
+    # The plunger has five rings but three standard states: in, half way, out.
+    assert PLUNGER.standard_codes == (0, 2, 4)
     assert SLIDER.standard_codes == (1.0, 2.0, 3.0, 4.0, 5.0)
-    assert sum(len(spec.standard_codes) for spec in DEFAULT_MODULES) == 18
+    assert sum(len(spec.standard_codes) for spec in DEFAULT_MODULES) == 16
+
+
+def test_the_plunger_has_three_standard_states_and_a_tolerance_an_arm_can_meet():
+    assert (PLUNGER.snap, PLUNGER.tolerance) == (0.15, 0.5)  # reading a ring stays fine; a goal is 2.5 mm either side
+    assert SLIDER.tolerance == SLIDER.snap and DIAL.tolerance == DIAL.snap
+    half = task_from_codes("C2")
+    assert half.signature == "plunger=2±0.5 within 20s"
+    assert half.steps[0].say == (
+        "Set the red plunger to 2", "Set the red plunger half way", "Leave the red plunger half way between in and out",
+    )
+    # A tile the start leaves out begins at one of its other standard states: in or out, never a ring next door.
+    assert {half.sample_start(random.Random(seed))["plunger"] for seed in range(40)} == {0.1, 3.9}
+    assert {task_from_codes("C0").sample_start(random.Random(seed))["plunger"] for seed in range(40)} == {2.0, 3.9}
+    # Rings 1 and 3 can still be asked for; they are just not standard steps.
+    ring = task_from_codes("C1")
+    assert ring.signature == "plunger=1±0.5 within 20s" and ring.steps[0].say == () and codes_for(ring) == "C1"
+    assert "C1" not in [code for code, _, _ in standard_steps()]
 
 
 def test_codes_and_values_convert_both_ways():
@@ -33,7 +51,7 @@ def test_the_users_example_on_one_line():
     assert task.name == "c0_a2_d4_as_b0"
     assert [step.kind for step in task.steps] == ["reach"] * 5
     assert task.signature == (
-        "plunger=0.1±0.15 within 20s | switch=40±5 within 20s | slider=4±0.15 within 20s "
+        "plunger=0.1±0.5 within 20s | switch=40±5 within 20s | slider=4±0.15 within 20s "
         "| switch=start±5 within 20s | dial=0±3 within 20s"
     )
     assert task.sample_start(random.Random(0)) == {"switch": -40.0, "dial": 100.0, "plunger": 3.9, "slider": 1.0}
@@ -76,7 +94,7 @@ def test_in_between_values_are_legal_but_have_no_library_wording():
 def test_standard_steps_come_with_a_plain_sentence_and_alternatives():
     rows = standard_steps()
     assert [code for code, _, _ in rows] == [
-        "A0", "A1", "A2", "B0", "B25", "B50", "B75", "B100", "C0", "C1", "C2", "C3", "C4", "D1", "D2", "D3", "D4", "D5",
+        "A0", "A1", "A2", "B0", "B25", "B50", "B75", "B100", "C0", "C2", "C4", "D1", "D2", "D3", "D4", "D5",
     ]
     assert all(plain and len(others) == 2 for _, plain, others in rows)
     for code, plain, _ in rows:

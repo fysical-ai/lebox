@@ -64,6 +64,11 @@ class ModuleSpec:
     code_map: tuple[tuple[float, float], ...] = ()
     """Step-code number to scale value, where the two differ (the switch: 0, 1, 2 for O, I, II).
     Empty means the code number is the scale value itself, as printed on the tile."""
+    standard: tuple[float, ...] = ()
+    """The code numbers of the standard states, where they are not simply every marking
+    (the plunger: 0, 2 and 4 for in, half way and out)."""
+    task_tol: float | None = None
+    """The usual tolerance of a task goal, where a robot cannot be asked to hit ``snap``."""
 
     def __post_init__(self) -> None:
         lo, hi = self.stops
@@ -73,6 +78,13 @@ class ModuleSpec:
             raise ValueError(f"{self.name}: work range {self.work} must lie inside stops {self.stops}")
         if not self.markings:
             raise ValueError(f"{self.name}: needs at least one marking")
+        if self.task_tol is not None and self.task_tol <= 0:
+            raise ValueError(f"{self.name}: task_tol must be greater than 0")
+
+    @property
+    def tolerance(self) -> float:
+        """The usual tolerance of a task goal on this module, in scale units."""
+        return self.snap if self.task_tol is None else self.task_tol
 
     @property
     def phrase(self) -> str:
@@ -97,7 +109,9 @@ class ModuleSpec:
 
     @property
     def standard_codes(self) -> tuple[float, ...]:
-        """The code numbers of the standard states: the positions marked on the tile."""
+        """The code numbers of the standard states: by default the positions marked on the tile."""
+        if self.standard:
+            return self.standard
         if self.code_map:
             return tuple(number for number, _ in self.code_map)
         return tuple(marking.value for marking in self.markings)
@@ -259,6 +273,10 @@ PLUNGER = ModuleSpec(
     noun="plunger",
     colour="red",
     letter="C",
+    # The rings are 5 mm apart: too fine for an arm to pick one out. The standard
+    # states are in, half way and out, and a goal allows 2.5 mm either side.
+    standard=(0, 2, 4),
+    task_tol=0.5,
 )
 
 SLIDER = ModuleSpec(

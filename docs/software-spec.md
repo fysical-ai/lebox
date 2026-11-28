@@ -48,7 +48,7 @@ Outcomes: `success`, `late`, `side_effect`, `overshoot`, `partial`, `wrong_modul
 Rules as implemented:
 - Success needs every goal module inside its goal and, with `others: unchanged`, every other module within tolerance of where it started, continuously for `hold_s`. The live scorer ends the episode at that moment; otherwise the episode runs to `timeout_s` and is classified from its final state.
 - `late` is new against the first draft of this spec: in the goal when the episode ended, but not held long enough.
-- A module counts as moved beyond a quarter of its marking tolerance, and as disturbed beyond the full tolerance (switch 5 deg, dial 3 %, plunger and slider 0.15) unless `others_tol` says otherwise.
+- A module counts as moved beyond a quarter of its marking tolerance, and as disturbed beyond the full tolerance (switch 5 deg, dial 3 %, plunger and slider 0.15) unless `others_tol` says otherwise. A task goal on the plunger is wider than that: half a ring (2.5 mm) either side, because its standard states are only in, half way and out.
 - The start state for scoring is the first sample of the trace, i.e. where the modules really were.
 - Task files: `start` takes a value or marking, `{sample: [...]}`, `{range: [low, high]}` or `random`; `goal` takes a value or marking, `{target, tol}` or `{min, max}`. Every goal module must have a start, and a start may not lie in or next to the goal.
 - Not yet supported: goals sampled per episode ("move the slider to {n}"), and ordered multi-step tasks.

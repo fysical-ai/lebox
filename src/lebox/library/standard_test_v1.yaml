@@ -19,7 +19,7 @@ levels:
         tasks: ["A1", "A2", "B25 > B0", "B75 > B100", "C0", "C4", "D1", "D5"]
       - id: marks
         title: to a middle mark
-        tasks: ["A0", "B25", "B50", "B75", "C1", "C2", "C3", "D2", "D3", "D4"]
+        tasks: ["A0", "B25", "B50", "B75", "C2", "D2", "D3", "D4"]
       - id: turns
         title: large valve turn
         tasks: ["B0 > B100", "B100 > B0"]

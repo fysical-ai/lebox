@@ -43,7 +43,7 @@ Early. The host software runs end to end on a simulated board. The driver for re
 | Calibration against the printed hard stops | not started; needs the printed parts |
 | Task files: one step or many, reach and hold steps, several wordings, table import; 13 built-in tasks | done |
 | Step codes: a task on one line, e.g. `C0 A2 D4 AS B0` | done |
-| LeBox Standard Test v1.0: 39 tasks in three levels, run and reported with `lebox suite` | done on the simulator |
+| LeBox Standard Test v1.0: 37 tasks in three levels, run and reported with `lebox suite` | done on the simulator |
 | Scorer and trace files | done |
 | `lebox task list`, `show`, `check` and `lebox score` | done |
 | `lebox task run`: reset, then score an episode live | done on the simulator |
@@ -151,11 +151,11 @@ The steps are the definition of the task; `say` is only the wording, and one of 
 Every standard step also has a short code, the tile letter and the number printed on the tile, so a whole task fits on one line:
 
 ```bash
-lebox codes                                             # the 18 standard steps and their wordings
+lebox codes                                             # the 16 standard steps and their wordings
 lebox task run --sim "A1 B100 C4 D1 > C0 A2 D4 AS B0"   # start state > steps
 ```
 
-The LeBox Standard Test is a frozen set of 39 such tasks in three levels (one action, two or three, five or more) for comparing policies:
+The LeBox Standard Test is a frozen set of 37 such tasks in three levels (one action, two or three, five or more) for comparing policies:
 
 ```bash
 lebox suite list

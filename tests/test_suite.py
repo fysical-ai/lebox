@@ -32,7 +32,7 @@ def test_the_standard_test_is_what_was_agreed():
     assert suite.groups("single") == ("stops", "marks", "turns")
     assert suite.groups("long") == ("revisit", "timed")
     count = {level: sum(1 for item in suite.tasks if item.level == level) for level in suite.levels}
-    assert count == {"single": 20, "short": 8, "long": 10, "control": 1}
+    assert count == {"single": 18, "short": 8, "long": 10, "control": 1}
     steps = {level: [len(item.task.steps) for item in suite.tasks if item.level == level] for level in suite.levels}
     assert set(steps["single"]) == {1} and set(steps["short"]) == {2, 3}
     assert min(steps["long"]) >= 3 and max(steps["long"]) == 6
@@ -46,7 +46,7 @@ def test_single_actions_cover_every_standard_state():
         if item.level == "single":
             goal = item.task.steps[0].goals[0]
             targets.add(item.task.specs[goal.module].code_for_value(goal.target))
-    assert len(targets) == 18
+    assert len(targets) == 16
 
 
 def test_every_long_revisit_task_uses_a_tile_twice():
@@ -68,7 +68,7 @@ def test_a_run_is_repeatable_and_a_perfect_hand_passes_everything(tmp_path):
     suite = load_suite()
     first = run_suite(suite, sim_board, tmp_path / "a", episodes=2, sim_play="solve")
     second = run_suite(suite, sim_board, tmp_path / "b", episodes=2, sim_play="solve")
-    assert len(first) == 78
+    assert len(first) == 74
     assert [(r["code"], r["seed"], r["start"], r["instruction"]) for r in first] == [
         (r["code"], r["seed"], r["start"], r["instruction"]) for r in second
     ]
@@ -76,9 +76,9 @@ def test_a_run_is_repeatable_and_a_perfect_hand_passes_everything(tmp_path):
     # Two episodes of one task do not all begin in the same place.
     starts = [record["start"] for record in first if record["code"] == "D3"]
     assert len(starts) == 2
-    assert (tmp_path / "a" / "results.jsonl").read_text().count("\n") == 78
+    assert (tmp_path / "a" / "results.jsonl").read_text().count("\n") == 74
     traces = sorted(path.name for path in (tmp_path / "a" / "traces").iterdir())
-    assert len(traces) == 78  # one per episode: tasks that differ only in their start do not collide
+    assert len(traces) == 74  # one per episode: tasks that differ only in their start do not collide
     assert "single-turns-b0__b100-00.jsonl" in traces and "single-stops-b75__b100-00.jsonl" in traces
     assert "long-revisit-c0_a2_d4_as_b0-01.jsonl" in traces
     assert load_results(tmp_path / "a") == json.loads(json.dumps(first))
@@ -101,7 +101,7 @@ def test_plain_and_varied_wording(tmp_path):
 def test_an_idle_robot_fails_everything_except_the_restraint_task(tmp_path):
     records = run_suite(load_suite(), sim_board, tmp_path, episodes=1, sim_play="idle", save_traces=False)
     by_level = {row.level: row for row in summarise(records) if row.group == "all"}
-    assert by_level["single"].successes == 0 and by_level["single"].outcomes == {"no_contact": 20}
+    assert by_level["single"].successes == 0 and by_level["single"].outcomes == {"no_contact": 18}
     assert by_level["control"].successes == 1  # touching nothing is what that task asks for
     assert by_level["long"].steps_done == 0.0
 
@@ -116,10 +116,10 @@ def test_summary_counts_and_intervals(tmp_path):
         ("control", "all"),
     ]
     single = rows[3]
-    assert (single.tasks, single.episodes) == (20, 60)
+    assert (single.tasks, single.episodes) == (18, 54)
     assert single.successes == sum(row.successes for row in rows[:3])
     assert single.low <= single.rate <= single.high
-    assert sum(single.outcomes.values()) == 60
+    assert sum(single.outcomes.values()) == 54
     long_all = rows[9]
     assert long_all.steps_total == pytest.approx(4.9) and long_all.steps_done < long_all.steps_total
     # An imperfect hand does worse the longer the task.
@@ -136,7 +136,7 @@ def test_wilson_interval():
 
 def test_suite_commands(tmp_path, capsys):
     code, text = run("suite", "list")
-    assert code == 0 and text.startswith("LeBox Standard Test v1.0: 39 tasks, 10 episodes each\n")
+    assert code == 0 and text.startswith("LeBox Standard Test v1.0: 37 tasks, 10 episodes each\n")
     assert "single: one action" in text and "    C0 A2 D4 AS B0" in text
 
     out = tmp_path / "run"

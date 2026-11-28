@@ -95,7 +95,7 @@ Every module that a step names needs a start, and the start is kept clear of tha
 | `dial: {min: 75}`, `dial: {max: 25}`, `dial: {min: 40, max: 60}` | anywhere in this band |
 | `switch: start` | wherever the module was when the episode began ("put it back") |
 
-Several modules in one step mean all of them at once. The usual tolerances are 5 degrees for the switch, 3 % for the dial and 0.15 for the plunger and slider.
+Several modules in one step mean all of them at once. The usual tolerances are 5 degrees for the switch, 3 % for the dial, 0.15 of a mark (1.5 mm) for the slider and half a ring (2.5 mm) for the plunger.
 
 ### Times
 
@@ -150,10 +150,12 @@ Every standard step has a short code: the tile letter and the number printed on 
 |---|---|---|---|
 | A | switch | `A0` `A1` `A2` | O, I, II (the printed symbols read as 0, 1, 2) |
 | B | valve | `B0` `B25` `B50` `B75` `B100` | CLOSED, 25, 50, 75, OPEN |
-| C | plunger | `C0` to `C4` | ring 0 (pushed in) to ring 4 (pulled out) |
+| C | plunger | `C0` `C2` `C4` | pushed in, half way, pulled out (rings 0, 2 and 4) |
 | D | slider | `D1` to `D5` | marks 1 to 5 |
 
-These eighteen are the standard states. The valve, plunger and slider also take values in between (`B37`, `D2.5`); those are legal but not standard.
+These sixteen are the standard states. The valve, plunger and slider also take values in between (`B37`, `C1`, `D2.5`); those are legal but not standard.
+
+The plunger has five rings but three standard states. The rings are 5 mm apart, which is too fine to ask an arm to pick one out, so the standard steps are in, half way and out, and a plunger goal allows half a ring either side.
 
 | Code | Meaning |
 |---|---|
@@ -192,14 +194,14 @@ The LeBox Standard Test is a fixed set of tasks for comparing policies. It is fr
 
 | Level | What it is | Sub-scores | Tasks |
 |---|---|---|---|
-| `single` | one action | to an end stop (8), to a middle mark (10), large valve turn (2) | 20 |
+| `single` | one action | to an end stop (8), to a middle mark (8), large valve turn (2) | 18 |
 | `short` | two or three actions | pairs (4), triples (4) | 8 |
 | `long` | five or more steps | a tile used twice or put back (6), with waits (4) | 10 |
 | `control` | touch nothing for 10 s | | 1 |
 
-The single actions between them reach every one of the eighteen standard states. The sub-scores come from the same run: they show whether single actions fail on precision, and whether long tasks fail on timing.
+The single actions between them reach every one of the sixteen standard states. The sub-scores come from the same run: they show whether single actions fail on precision, and whether long tasks fail on timing.
 
-Each task runs 10 times, 390 episodes in all. Episode k of a task always has the same start state and the same wording.
+Each task runs 10 times, 370 episodes in all. Episode k of a task always has the same start state and the same wording.
 
 ```bash
 lebox suite list                                   # the levels and tasks

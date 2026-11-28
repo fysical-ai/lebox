@@ -538,17 +538,17 @@ def _parse_goals(task: str, section: str, raw: Any, by_name: Mapping[str, Module
     for module, entry in raw.items():
         spec = _spec(task, section, module, by_name)
         if _is_start_word(entry):
-            goals.append(Goal(spec.name, -spec.snap, spec.snap, margin=spec.snap, from_start=True))
+            goals.append(Goal(spec.name, -spec.tolerance, spec.tolerance, margin=spec.tolerance, from_start=True))
             continue
         if not isinstance(entry, dict):
             target = _resolve(task, section, spec, entry)
-            goals.append(Goal(spec.name, target - spec.snap, target + spec.snap, target, margin=spec.snap))
+            goals.append(Goal(spec.name, target - spec.tolerance, target + spec.tolerance, target, margin=spec.tolerance))
             continue
         keys = set(entry)
         if "target" in keys:
             if keys - {"target", "tol"}:
                 raise TaskError(f"{task}: {section} {module}: with 'target' only 'tol' may be added, got {sorted(keys)}")
-            tol = _number(task, f"{section} {module} tol", entry.get("tol", spec.snap))
+            tol = _number(task, f"{section} {module} tol", entry.get("tol", spec.tolerance))
             if tol <= 0:
                 raise TaskError(f"{task}: {section} {module}: 'tol' must be greater than 0")
             if _is_start_word(entry["target"]):
@@ -567,7 +567,7 @@ def _parse_goals(task: str, section: str, raw: Any, by_name: Mapping[str, Module
                 )
             if not low < high:
                 raise TaskError(f"{task}: {section} {module}: 'min' ({low:g}) must be below 'max' ({high:g})")
-            goals.append(Goal(spec.name, low, high, margin=spec.snap))
+            goals.append(Goal(spec.name, low, high, margin=spec.tolerance))
         else:
             raise TaskError(
                 f"{task}: {section} {module}: give a value, {{target, tol}}, {{min, max}} or 'start'; "
