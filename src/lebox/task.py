@@ -373,11 +373,15 @@ def load_builtin(name: str, specs: Iterable[ModuleSpec] = DEFAULT_MODULES) -> Ta
 
 
 def find_task(name_or_path: str, specs: Iterable[ModuleSpec] = DEFAULT_MODULES) -> Task:
-    """A built-in task by name, or a task file by path."""
+    """A built-in task by name, a task file by path, or a line of step codes such as ``B50 W30 D5``."""
     if name_or_path in builtin_names():
         return load_builtin(name_or_path, specs)
     if Path(name_or_path).is_file() or name_or_path.endswith((".yaml", ".yml")):
         return Task.load(name_or_path, specs)
+    from .codes import looks_like_codes, task_from_codes
+
+    if looks_like_codes(name_or_path):
+        return task_from_codes(name_or_path, specs=specs)
     raise TaskError(
         f"'{name_or_path}' is neither a built-in task nor a task file. Run 'lebox task list' to see the built-in ones."
     )

@@ -142,6 +142,81 @@ An empty module cell means "leave it as it is". In a `start` row, `0..30` is a r
 lebox task import my_task.csv -o my_task.yaml
 ```
 
+## Step codes: a task on one line
+
+Every standard step has a short code: the tile letter and the number printed on the tile.
+
+| Tile | Module | Codes | Meaning |
+|---|---|---|---|
+| A | switch | `A0` `A1` `A2` | O, I, II (the printed symbols read as 0, 1, 2) |
+| B | valve | `B0` `B25` `B50` `B75` `B100` | CLOSED, 25, 50, 75, OPEN |
+| C | plunger | `C0` to `C4` | ring 0 (pushed in) to ring 4 (pulled out) |
+| D | slider | `D1` to `D5` | marks 1 to 5 |
+
+These eighteen are the standard states. The valve, plunger and slider also take values in between (`B37`, `D2.5`); those are legal but not standard.
+
+| Code | Meaning |
+|---|---|
+| `W30` | wait 30 seconds |
+| `AS` | put tile A back where it started |
+| `B50+D5` | both in the same step |
+
+A task is its steps in order, with an optional start state before a `>`:
+
+```text
+A1 B100 C4 D1 > C0 A2 D4 AS B0
+```
+
+A tile that the steps use but the start does not mention begins at one of its other standard states, picked per episode.
+
+What a code does not say is fixed by the library, so the same line always makes the same task:
+
+- the tile's usual tolerance;
+- 20 s for each action;
+- a wait may be left up to 10 % early (`W30` from 27 s on);
+- one plain sentence and two alternatives for every standard step. `lebox codes` lists them.
+
+A line of codes works wherever a task name does:
+
+```bash
+lebox task show "B50 W30 D5"
+lebox task run --sim "A1 B100 C4 D1 > C0 A2 D4 AS B0"
+lebox task build "B50 W30 D5" -o my_task.yaml     # write it out as a task file to edit
+```
+
+Letters name the kind of tile, not its place on the board: A is the knife switch wherever it sits. A new kind of tile gets the next letter.
+
+## The standard test
+
+The LeBox Standard Test is a fixed set of tasks for comparing policies. It is frozen and versioned: the tasks, the start states and the wordings all follow from the file and its seed, so two runs of the same version are the same test. It lives in `src/lebox/library/standard_test_v1.yaml`.
+
+| Level | What it is | Sub-scores | Tasks |
+|---|---|---|---|
+| `single` | one action | to an end stop (8), to a middle mark (10), large valve turn (2) | 20 |
+| `short` | two or three actions | pairs (4), triples (4) | 8 |
+| `long` | five or more steps | a tile used twice or put back (6), with waits (4) | 10 |
+| `control` | touch nothing for 10 s | | 1 |
+
+The single actions between them reach every one of the eighteen standard states. The sub-scores come from the same run: they show whether single actions fail on precision, and whether long tasks fail on timing.
+
+Each task runs 10 times, 390 episodes in all. Episode k of a task always has the same start state and the same wording.
+
+```bash
+lebox suite list                                   # the levels and tasks
+lebox suite run --sim --out runs/demo              # the whole test on the simulator
+lebox suite run --port /dev/ttyACM0 --out runs/1   # on a real box
+lebox suite run --sim --out runs/q --episodes 1    # a quick pass: one episode per task
+lebox suite report runs/1                          # print the summary of an earlier run
+```
+
+Options: `--level single` runs one level; `--wording varied` gives each episode one of the alternative wordings instead of the plain sentence.
+
+The report gives, per level and sub-score: episodes, successes, the success rate with its 95 % interval, and for longer tasks the average number of steps completed. Every episode is saved to `results.jsonl` with its trace, so a run can be re-scored or re-reported later.
+
+At the time limits the full test takes at most about five and a half hours; a policy that works finishes much sooner, because an episode ends as soon as the task is done.
+
+The order of difficulty between the levels is a design assumption. It has not yet been checked against a trained policy.
+
 ## How steps are scored
 
 The scorer works through the steps in order, from the encoder readings alone.
@@ -172,3 +247,4 @@ For a task with several steps, the outcome describes the step the episode stoppe
 - The box sees its own modules, not the arm. During a wait it can tell that nothing on the board moved; it cannot tell whether the arm stood still.
 - Steps are strictly ordered. A checklist that may be done in any order is not supported.
 - A goal cannot yet vary per episode ("move the slider to {n}" with a different n each time). Start positions can.
+- The step codes assume the plunger's ring 0 shows when it is pushed fully in. That is still to be confirmed on the printed part.

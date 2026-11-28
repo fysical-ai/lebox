@@ -203,9 +203,12 @@ def test_board_lists_servo_ids_names_and_scales():
     code, text = run("board")
     assert code == 0
     lines = text.splitlines()
-    assert lines[0].split() == ["module", "servo", "id", "called", "scale", "markings"]
-    assert lines[2] == "dial             2  the blue valve    0 to 100 %        CLOSED, 25, 50, 75, OPEN"
-    assert [line.split()[1] for line in lines[1:]] == ["1", "2", "3", "4"]
+    assert lines[0].split() == ["tile", "module", "servo", "id", "called", "scale", "markings", "codes"]
+    assert lines[2] == "B    dial             2  the blue valve    0 to 100 %        CLOSED, 25, 50, 75, OPEN  B0 B25 B50 B75 B100"
+    assert [line.split()[:3] for line in lines[1:]] == [
+        ["A", "switch", "1"], ["B", "dial", "2"], ["C", "plunger", "3"], ["D", "slider", "4"],
+    ]
+    assert lines[1].endswith("A0 A1 A2")
 
 
 def test_task_show_lists_the_steps_of_a_longer_task():
