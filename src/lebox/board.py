@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .bus import ServoBus
 from .calibration import Calibration, CalibrationError
 from .modules import DEFAULT_MODULES, ModuleSpec
+from .motion import Clock, MotionError, MotionSettings, drive
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,19 @@ class Reading:
     label: str | None
     """The marking the element is at, or ``None`` between markings."""
     in_work_range: bool
+
+
+@dataclass(frozen=True)
+class MoveResult:
+    """Where a driven module ended up after its torque was released."""
+
+    name: str
+    target: float
+    reached: float
+    error: float
+    """Reached minus target, on the module's scale."""
+    error_ticks: int
+    seconds: float
 
 
 class Board:
@@ -91,6 +105,59 @@ class Board:
         """Torque off everywhere: the robot (or a hand) can move every module."""
         for spec in self.specs:
             self.bus.set_torque(spec.servo_id, False)
+
+    def move(
+        self,
+        targets: Mapping[str, float | int | str],
+        settings: MotionSettings = MotionSettings(),
+        clock: Clock | None = None,
+    ) -> dict[str, MoveResult]:
+        """Drive modules to targets, one at a time, releasing each when it arrives.
+
+        Every target is checked before anything moves. Whatever happens, all
+        modules are passive again when this returns or raises.
+        """
+        clock = clock or Clock()
+        plan = [(name, self.spec(name).resolve(target), self.raw_for(name, target)) for name, target in targets.items()]
+        results: dict[str, MoveResult] = {}
+        try:
+            for name, value, raw in plan:
+                spec = self.spec(name)
+                cal = self.calibration.modules[name]
+                started = clock.now()
+                final = drive(self.bus, spec.servo_id, raw, settings, clock)
+                reached = spec.value_from_raw(final, cal.raw_lo, cal.raw_hi)
+                results[name] = MoveResult(
+                    name=name,
+                    target=value,
+                    reached=reached,
+                    error=reached - value,
+                    error_ticks=final - raw,
+                    seconds=clock.now() - started,
+                )
+        finally:
+            self.passive()
+        return results
+
+    def reset(
+        self,
+        start: Mapping[str, float | int | str],
+        settings: MotionSettings = MotionSettings(),
+        clock: Clock | None = None,
+    ) -> dict[str, MoveResult]:
+        """Put modules in a start state and leave the board passive.
+
+        Raises ``MotionError`` if a module ends further from its start than
+        its marking tolerance, i.e. it would read as a different position.
+        """
+        results = self.move(start, settings, clock)
+        for name, result in results.items():
+            if abs(result.error) > self.spec(name).snap:
+                raise MotionError(
+                    f"{name} was sent to {result.target:g} but rests at {result.reached:.3g} after release; "
+                    "the reset did not hold."
+                )
+        return results
 
     def close(self) -> None:
         self.bus.close()

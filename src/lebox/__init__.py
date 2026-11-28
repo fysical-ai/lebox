@@ -1,9 +1,10 @@
 """LeBox: a self-resetting, self-scoring test bench for robot manipulation policies."""
 
-from .board import Board, Reading
-from .bus import BusError, ServoBus, SimBus
+from .board import Board, MoveResult, Reading
+from .bus import BusError, ServoBus, ServoStatus, SimBus
 from .calibration import Calibration, CalibrationError, ModuleCalibration
 from .modules import DEFAULT_MODULES, Marking, ModuleError, ModuleSpec
+from .motion import Clock, MotionError, MotionSettings, SimClock, StallError, drive
 from .scorer import OUTCOMES, Result, ScoreError, Scorer, score
 from .task import Goal, Task, TaskError, builtin_names, find_task, load_builtin
 from .trace import Sample, TraceError, load_trace, save_trace
@@ -15,12 +16,16 @@ __all__ = [
     "BusError",
     "Calibration",
     "CalibrationError",
+    "Clock",
     "DEFAULT_MODULES",
     "Goal",
     "Marking",
     "ModuleCalibration",
     "ModuleError",
     "ModuleSpec",
+    "MotionError",
+    "MotionSettings",
+    "MoveResult",
     "OUTCOMES",
     "Reading",
     "Result",
@@ -28,11 +33,15 @@ __all__ = [
     "ScoreError",
     "Scorer",
     "ServoBus",
+    "ServoStatus",
     "SimBus",
+    "SimClock",
+    "StallError",
     "Task",
     "TaskError",
     "TraceError",
     "builtin_names",
+    "drive",
     "find_task",
     "load_builtin",
     "load_trace",

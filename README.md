@@ -28,7 +28,7 @@ The images are renders of the v0.2 design, not photos of a built box.
 
 ## Status
 
-Early. This repository currently holds the first pieces of the host software, and they run against a simulated board only.
+Early. The host software runs end to end on a simulated board. The driver for real servos is written but has only been tested against an emulated servo; [docs/bench-day.md](docs/bench-day.md) is the plan for its first run on hardware.
 
 | Piece | State |
 |---|---|
@@ -37,18 +37,21 @@ Early. This repository currently holds the first pieces of the host software, an
 | Board: read every module in real units | done |
 | Simulated servo bus | done |
 | `lebox monitor --sim` | done |
-| Feetech bus driver | not started; needs the hardware |
-| `lebox calibrate`, `move`, `reset`, `selftest` | not started; need the driver |
+| Feetech bus driver (`lebox ports`, `ping`, `setup-motors`) | written; not yet run on real servos |
+| Safe motion: `lebox move`, `reset`, `selftest` | done on the simulator; not yet run on real servos |
+| `lebox calibrate --bench` (loose servos, no stops) | done on the simulator |
+| Calibration against the printed hard stops | not started; needs the printed parts |
 | Task files, with 11 built-in tasks | done |
 | Scorer and trace files | done |
 | `lebox task list`, `show`, `check` and `lebox score` | done |
+| `lebox task run`: reset, then score an episode live | done on the simulator |
 | `lebox-record` and the `lerobot-rollout` strategy | not started |
 
 The design is in [docs/software-spec.md](docs/software-spec.md).
 
 ## Try it
 
-Python 3.10 or newer. The only dependency is PyYAML.
+Python 3.10 or newer. Dependencies: PyYAML and pyserial.
 
 ```bash
 pip install -e ".[dev]"
@@ -64,7 +67,25 @@ plunger    3   2145        3.03  3       |------------------o------|
 slider     4   2211        3.90  4       |-----------------o-------|
 ```
 
-`--once` prints a single reading; `--frames N` prints N. Without `--sim` the command stops with a message, because the driver for the real bus is not written yet.
+`--once` prints a single reading; `--frames N` prints N. Every command that touches a board takes `--sim` for the simulated board or `--port` for a real one.
+
+The whole loop on the simulator, with a simulated hand playing the robot:
+
+```bash
+lebox task run --sim slider_to_3 --seed 1
+```
+
+```text
+slider_to_3: start state in place (slider at 2). Board passive.
+Instruction: "Move the slider to 3"
+slider_to_3: success
+  duration       1.9 s
+  time to goal   0.9 s
+  progress       100% (best 100%)
+  final error    slider 0
+  moved          slider
+  disturbed      -
+```
 
 Run the tests with `pytest`.
 
@@ -128,6 +149,22 @@ slider_to_3: side_effect
 | `wrong_module` | only modules that are not part of the goal were moved |
 | `no_contact` | nothing moved |
 | `aborted` | the episode was stopped from outside |
+
+## On real servos
+
+Not yet run on hardware; [docs/bench-day.md](docs/bench-day.md) is the first-run plan, and it starts with read-only checks.
+
+```bash
+lebox ports                                  # find the servo adapter
+lebox ping --port /dev/ttyACM0               # read only: who is on the bus
+lebox setup-motors --port /dev/ttyACM0       # ids 1-4 and a stored torque cap, one servo at a time
+lebox calibrate --bench --port /dev/ttyACM0  # loose servos: present position becomes mid-travel
+lebox monitor --port /dev/ttyACM0
+lebox move --port /dev/ttyACM0 slider=3
+lebox task run --port /dev/ttyACM0 slider_to_3
+```
+
+Every move follows the same safety rules: it refuses to start unless the servo has a stored torque cap, sets and reads back a low torque limit, creeps a few degrees at a time, releases at once if the servo stalls, and always ends with torque off.
 
 ## Using it from Python
 

@@ -13,11 +13,13 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .modules import DEFAULT_MODULES, TICKS_PER_REV, ModuleSpec
 
 FORMAT_VERSION = 1
+BENCH_MARGIN_TICKS = 40
+"""Room kept between a bench calibration's ends and the encoder's wrap point."""
 _BOARD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 
@@ -44,6 +46,8 @@ class Calibration:
     created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     nominal: bool = False
     """True when the numbers come from the design, not from a real board."""
+    bench: bool = False
+    """True for a bench calibration: loose servos with no hard stops, ends set from the design travel."""
 
     @classmethod
     def from_design(cls, specs: Iterable[ModuleSpec] = DEFAULT_MODULES, board_id: str = "sim") -> "Calibration":
@@ -57,6 +61,34 @@ class Calibration:
             centre = TICKS_PER_REV / 2
             modules[spec.name] = ModuleCalibration(round(centre - half), round(centre + half))
         return cls(board_id=board_id, modules=modules, nominal=True)
+
+    @classmethod
+    def from_bench(
+        cls,
+        positions: Mapping[str, int],
+        specs: Iterable[ModuleSpec] = DEFAULT_MODULES,
+        board_id: str = "bench",
+    ) -> "Calibration":
+        """Calibration for loose servos on the bench, which have no hard stops.
+
+        Wherever each horn sits now becomes the middle of its travel, and the
+        design travel puts the two ends either side of it.
+        """
+        modules = {}
+        for spec in specs:
+            if spec.name not in positions:
+                raise CalibrationError(f"{spec.name}: no position given for bench calibration")
+            middle = positions[spec.name]
+            half = spec.expected_travel_ticks / 2.0
+            lowest, highest = BENCH_MARGIN_TICKS + half, TICKS_PER_REV - 1 - BENCH_MARGIN_TICKS - half
+            if not lowest <= middle <= highest:
+                raise CalibrationError(
+                    f"{spec.name}: the horn is at {middle}, but it must sit between {lowest:.0f} and {highest:.0f} "
+                    f"so that its whole travel fits in one turn of the encoder. "
+                    f"Turn it towards {TICKS_PER_REV // 2} and calibrate again."
+                )
+            modules[spec.name] = ModuleCalibration(round(middle - half), round(middle + half))
+        return cls(board_id=board_id, modules=modules, bench=True)
 
     def problems(self, specs: Iterable[ModuleSpec] = DEFAULT_MODULES, tolerance: float = 0.05) -> list[str]:
         """Reasons not to trust this calibration. An empty list means it looks sound.
@@ -88,6 +120,7 @@ class Calibration:
             "board_id": self.board_id,
             "created": self.created,
             "nominal": self.nominal,
+            "bench": self.bench,
             "modules": {
                 name: {"raw_lo": cal.raw_lo, "raw_hi": cal.raw_hi} for name, cal in self.modules.items()
             },
@@ -109,6 +142,7 @@ class Calibration:
                 modules=modules,
                 created=str(data.get("created", "")),
                 nominal=bool(data.get("nominal", False)),
+                bench=bool(data.get("bench", False)),
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise CalibrationError(f"calibration data is malformed: {exc!r}") from exc
